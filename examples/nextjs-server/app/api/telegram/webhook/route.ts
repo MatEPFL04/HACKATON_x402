@@ -1,23 +1,42 @@
 import { NextResponse } from "next/server";
 import { addImage } from "../../../../lib/image-storage";
 
-
 // ============================================================
-// POST /api/telegram/webhook
-//
-// Receives native Telegram updates directly (no separate bot).
-// Telegram pushes updates here when a user sends a photo.
-//
-// Caption format:
-//   "sunset, beach, ocean"           → tags only, default price 0.01 BSA
-//   "sunset, beach | 0.05"           → tags + price in BSA USD
-//   "sunset, beach | 0.05 | UQ_..."  → tags + price + wallet
-//
-// No caption → tags = ["untagged"], default price.
+// Config
 // ============================================================
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const DEFAULT_PRICE_BSA = "0.01";
+
+// ============================================================
+// Conversation state machine (in-memory)
+// ============================================================
+
+type Step = "WAIT_IMAGE" | "WAIT_DESCRIPTION" | "WAIT_PRICE";
+
+interface ConvState {
+  step: Step;
+  fileId?: string;
+  description?: string;
+  userId: number;
+  updatedAt: number;
+}
+
+// chatId → state
+const sessions = new Map<number, ConvState>();
+
+// Clean up sessions older than 30 minutes
+function cleanSessions() {
+  const ttl = 30 * 60 * 1000;
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (now - s.updatedAt > ttl) sessions.delete(id);
+  }
+}
+
+// ============================================================
+// Helpers
+// ============================================================
 
 function bsaToAtomic(bsa: string): string {
   const parts = bsa.split(".");
@@ -27,84 +46,134 @@ function bsaToAtomic(bsa: string): string {
   return (whole + BigInt(frac)).toString();
 }
 
-function parseCaption(caption?: string): {
-  tags: string[];
-  price: string;
-  wallet: string;
-} {
-  if (!caption || caption.trim() === "") {
-    return {
-      tags: ["untagged"],
-      price: bsaToAtomic(DEFAULT_PRICE_BSA),
-      wallet: "",
-    };
+async function send(chatId: number, text: string): Promise<void> {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+  }).catch((e) => console.error("[webhook] sendMessage failed:", e));
+}
+
+async function downloadFile(fileId: string): Promise<Buffer> {
+  const r = await fetch(
+    `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`
+  );
+  const d = await r.json();
+  if (!d.ok || !d.result?.file_path)
+    throw new Error(`getFile failed: ${JSON.stringify(d)}`);
+
+  const res = await fetch(
+    `https://api.telegram.org/file/bot${BOT_TOKEN}/${d.result.file_path}`
+  );
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// ============================================================
+// Step handlers
+// ============================================================
+
+async function handleStart(chatId: number, userId: number) {
+  cleanSessions();
+  sessions.set(chatId, { step: "WAIT_IMAGE", userId, updatedAt: Date.now() });
+  await send(
+    chatId,
+    "👋 Bienvenue dans <b>MAR marketplace!</b>\n\n" +
+    "Nous avons besoin des infos suivantes :\n" +
+    "🖼 Image  →  📝 Description  →  💵 Prix (USD)\n\n" +
+    "<b>Étape 1/3</b> — Envoie-moi une <b>photo</b> du produit."
+  );
+}
+
+async function handleImage(chatId: number, fileId: string, state: ConvState) {
+  state.fileId = fileId;
+  state.step = "WAIT_DESCRIPTION";
+  state.updatedAt = Date.now();
+  await send(
+    chatId,
+    "✅ Image reçue !\n\n" +
+    "<b>Étape 2/3</b> — Envoie-moi une <b>description</b> du produit."
+  );
+}
+
+async function handleDescription(chatId: number, text: string, state: ConvState) {
+  if (text.trim().length < 5) {
+    await send(chatId, "❌ Description trop courte (min. 5 caractères). Réessaie.");
+    return;
+  }
+  state.description = text.trim();
+  state.step = "WAIT_PRICE";
+  state.updatedAt = Date.now();
+  await send(
+    chatId,
+    "✅ Description enregistrée !\n\n" +
+    "<b>Étape 3/3</b> — Quel est le <b>prix en USD</b> ? (ex: <code>0.05</code>)"
+  );
+}
+
+async function handlePrice(
+  chatId: number,
+  text: string,
+  state: ConvState,
+  userName: string
+) {
+  const n = parseFloat(text.trim().replace(",", "."));
+  if (isNaN(n) || n <= 0) {
+    await send(chatId, "❌ Prix invalide. Entre un nombre positif (ex: <code>1.50</code>).");
+    return;
   }
 
-  const parts = caption.split("|").map((p) => p.trim());
+  const priceAtomic = bsaToAtomic(n.toFixed(9));
+  const fileId = state.fileId!;
+  const description = state.description!;
 
-  // Tags (first part, comma-separated)
-  const tags = parts[0]
+  // Download photo
+  let photoBuffer: Buffer;
+  try {
+    photoBuffer = await downloadFile(fileId);
+  } catch (e) {
+    await send(chatId, "❌ Impossible de télécharger la photo. Recommence avec /start.");
+    sessions.delete(chatId);
+    return;
+  }
+
+  const base64Data = photoBuffer.toString("base64");
+  const imageName = `photo_${state.userId}_${Date.now()}.jpg`;
+
+  // Parse description as tags (comma-separated) + store description
+  const tags = description
     .split(",")
     .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
+  const finalTags = tags.length > 0 ? tags : ["untagged"];
 
-  // Price (second part, optional)
-  const priceStr = parts[1]?.trim();
-  let price: string;
-  try {
-    const n = parseFloat(priceStr || "");
-    price = isNaN(n) || n < 0 ? bsaToAtomic(DEFAULT_PRICE_BSA) : bsaToAtomic(priceStr!);
-  } catch {
-    price = bsaToAtomic(DEFAULT_PRICE_BSA);
-  }
-
-  // Wallet (third part, optional)
-  const wallet = parts[2]?.trim() ?? "";
-
-  return { tags: tags.length > 0 ? tags : ["untagged"], price, wallet };
-}
-
-async function downloadTelegramFile(fileId: string): Promise<Buffer> {
-  // 1. Get file path from Telegram
-  const fileRes = await fetch(
-    `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`,
+  const record = await addImage(
+    imageName,
+    String(state.userId),
+    "", // wallet address — à renseigner plus tard
+    finalTags,
+    priceAtomic,
+    base64Data
   );
-  const fileData = await fileRes.json();
 
-  if (!fileData.ok || !fileData.result?.file_path) {
-    throw new Error(`Telegram getFile failed: ${JSON.stringify(fileData)}`);
-  }
+  sessions.delete(chatId);
 
-  // 2. Download the actual file
-  const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
-  const res = await fetch(downloadUrl);
-
-  if (!res.ok) {
-    throw new Error(`Download failed: ${res.status}`);
-  }
-
-  const arrayBuffer = await res.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  await send(
+    chatId,
+    `🎉 <b>Annonce publiée !</b>\n\n` +
+    `📝 <b>Description :</b> ${description}\n` +
+    `🏷 <b>Tags :</b> ${finalTags.join(", ")}\n` +
+    `💵 <b>Prix :</b> ${n.toFixed(2)} USD\n` +
+    `🆔 <b>ID :</b> <code>${record.id}</code>\n\n` +
+    `Tape /start pour créer une nouvelle annonce.`
+  );
 }
 
-async function sendTelegramMessage(chatId: number, text: string): Promise<void> {
-  try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
-    });
-  } catch (e) {
-    console.error("[webhook] Failed to send Telegram reply:", e);
-  }
-}
+// ============================================================
+// Main webhook handler
+// ============================================================
 
-// Next.js convention, that runs this function when a POST is sent to 
 export async function POST(req: Request) {
-  // Telegram expects 200 OK quickly, otherwise it retries
-
-  console.log("DEBUG:POST Taken")
-  console.log(BOT_TOKEN)
   try {
     if (!BOT_TOKEN) {
       console.error("[webhook] TELEGRAM_BOT_TOKEN not set");
@@ -112,69 +181,53 @@ export async function POST(req: Request) {
     }
 
     const update = await req.json();
-
-    // Only handle messages with photos
     const message = update.message;
-    if (!message?.photo || message.photo.length === 0) {
-      // Not a photo message — acknowledge silently
+    if (!message) return NextResponse.json({ ok: true });
+
+    const chatId: number = message.chat.id;
+    const userId: number = message.from?.id ?? chatId;
+    const userName: string = message.from?.username ?? String(userId);
+    const text: string | undefined = message.text;
+    const photo = message.photo;
+
+    // /start resets the session
+    if (text === "/start") {
+      await handleStart(chatId, userId);
       return NextResponse.json({ ok: true });
     }
 
-    const user = message.from;
-    const chatId = message.chat.id;
-    const caption = message.caption;
+    const state = sessions.get(chatId);
 
-    // Take the largest photo (last in array)
-    const photo = message.photo[message.photo.length - 1];
-
-    // Parse caption → tags, price, wallet
-    const { tags, price, wallet } = parseCaption(caption);
-
-    // Download photo from Telegram servers
-    let photoBuffer: Buffer;
-    try {
-      photoBuffer = await downloadTelegramFile(photo.file_id);
-    } catch (e) {
-      console.error("[webhook] Failed to download photo:", e);
-      await sendTelegramMessage(chatId, "Failed to download your photo. Please try again.");
+    // No active session → prompt /start
+    if (!state) {
+      await send(chatId, "Tape /start pour publier une annonce sur MAR marketplace.");
       return NextResponse.json({ ok: true });
     }
 
-    // Encode to base64
-    const base64Data = photoBuffer.toString("base64");
-
-    // Build image name
-    const imageName = `photo_${user.id}_${photo.file_unique_id}.jpg`;
-
-    // Store via shared layer
-    const record = addImage(
-      imageName,
-      String(user.id),
-      wallet,
-      tags,
-      price,
-      base64Data,
-    );
-
-    // Reply to user on Telegram
-    const priceDisplay = (Number(BigInt(price)) / 1_000_000_000).toFixed(
-      price.length > 9 ? 2 : Math.min(price.replace(/0+$/, "").length, 4),
-    );
-
-    await sendTelegramMessage(
-      chatId,
-      `Image listed on the marketplace!\n\n`
-        + `<b>ID:</b> <code>${record.id}</code>\n`
-        + `<b>Tags:</b> ${tags.join(", ")}\n`
-        + `<b>Price:</b> ${priceDisplay} BSA USD\n\n`
-        + `Buyers can find it at:\n`
-        + `<code>GET /api/images/${record.id}</code>`,
-    );
+    // Route by current step
+    if (state.step === "WAIT_IMAGE") {
+      if (photo && photo.length > 0) {
+        await handleImage(chatId, photo[photo.length - 1].file_id, state);
+      } else {
+        await send(chatId, "❌ Envoie une <b>photo</b>, pas du texte.");
+      }
+    } else if (state.step === "WAIT_DESCRIPTION") {
+      if (text) {
+        await handleDescription(chatId, text, state);
+      } else {
+        await send(chatId, "❌ Envoie du <b>texte</b> pour la description.");
+      }
+    } else if (state.step === "WAIT_PRICE") {
+      if (text) {
+        await handlePrice(chatId, text, state, userName);
+      } else {
+        await send(chatId, "❌ Envoie un <b>nombre</b> pour le prix (ex: <code>2.50</code>).");
+      }
+    }
 
     return NextResponse.json({ ok: true });
-  } catch (error) {
-    console.error("[webhook] Error:", error);
-    // Always return 200 to Telegram, otherwise it retries forever
-    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("[webhook] Error:", err);
+    return NextResponse.json({ ok: true }); // Always 200 to Telegram
   }
 }

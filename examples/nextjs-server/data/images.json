@@ -1,26 +1,3 @@
 [
-  {
-    "id": "ae5dc33d-4dc7-45ed-aeab-f9f62bc1862b",
-    "image_name": "new.jpg",
-    "owner_ID": "12345",
-    "owner_walletAddress": "UQ_TEST",
-    "attributs_image": [
-      "sunset",
-      "beach"
-    ],
-    "price": "10000000",
-    "created_at": "2026-03-21T16:59:21.622Z"
-  },
-  {
-    "id": "26f4f564-6d12-40d9-a777-f996b4000ba6",
-    "image_name": "photo_1024042819_AQADsA1rG7UH-FF-.jpg",
-    "owner_ID": "1024042819",
-    "owner_walletAddress": "testwallet",
-    "attributs_image": [
-      "keyboard",
-      "uiop"
-    ],
-    "price": "1000000000",
-    "created_at": "2026-03-21T19:22:50.992Z"
-  }
+  
 ]

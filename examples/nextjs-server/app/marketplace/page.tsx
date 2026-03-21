@@ -3,6 +3,10 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 
+// ============================================================
+// Types
+// ============================================================
+
 interface ImageMeta {
   id: string;
   image_name: string;
@@ -10,48 +14,162 @@ interface ImageMeta {
   price: string;
   owner_ID: string;
   created_at: string;
-  image_data?: string; // base64, retourné par le search endpoint
+  image_data?: string;
 }
+
+// ============================================================
+// Helpers
+// ============================================================
 
 function atomicToUSD(atomic: string): string {
   try {
     const n = BigInt(atomic);
     const whole = n / 1_000_000_000n;
-    const frac = n % 1_000_000_000n;
+    const frac  = n % 1_000_000_000n;
     if (frac === 0n) return `${whole}`;
-    const fracStr = frac.toString().padStart(9, "0").replace(/0+$/, "");
-    return `${whole}.${fracStr}`;
-  } catch {
-    return atomic;
-  }
+    return `${whole}.${frac.toString().padStart(9, "0").replace(/0+$/, "")}`;
+  } catch { return atomic; }
 }
 
 function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const sec = Math.floor(diff / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  return `${Math.floor(hr / 24)}d ago`;
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60)    return `${s}s ago`;
+  if (s < 3600)  return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }
 
+const TAG_COLORS = ["#6366f1","#06b6d4","#f59e0b","#10b981","#ec4899","#8b5cf6"];
+function tagColor(tag: string): string {
+  const sum = [...tag].reduce((a, c) => a + c.charCodeAt(0), 0);
+  return TAG_COLORS[Math.abs(sum) % TAG_COLORS.length];
+}
+
+// ============================================================
+// Sub-components
+// ============================================================
+
+function TagPill({ tag, active, onClick }: { tag: string; active: boolean; onClick: () => void }) {
+  const c = tagColor(tag);
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background:    active ? `${c}22` : "transparent",
+        border:        `1px solid ${active ? `${c}88` : "#1e293b"}`,
+        color:         active ? c : "#475569",
+        borderRadius:  20, padding: "4px 14px",
+        fontSize: 12, fontWeight: 500, cursor: "pointer", transition: "all .15s",
+      }}
+    >
+      {tag}
+    </button>
+  );
+}
+
+function ImageCard({ img, onClick }: { img: ImageMeta; onClick: () => void }) {
+  const [hov, setHov] = useState(false);
+  const price = atomicToUSD(img.price);
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        background: "#0f172a",
+        border: `1px solid ${hov ? "#334155" : "#1e293b"}`,
+        borderRadius: 16, overflow: "hidden", cursor: "pointer",
+        transition: "transform .18s, border-color .18s, box-shadow .18s",
+        transform: hov ? "translateY(-3px)" : "none",
+        boxShadow: hov ? "0 8px 32px rgba(0,0,0,.45)" : "none",
+      }}
+    >
+      {/* Image zone */}
+      <div style={{ position: "relative", height: 180, background: "#1e293b", overflow: "hidden" }}>
+        {img.image_data ? (
+          <img
+            src={`data:image/jpeg;base64,${img.image_data}`}
+            alt={img.image_name}
+            style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(7px)", transform: "scale(1.1)" }}
+          />
+        ) : (
+          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontSize: 40, opacity: .15 }}>🖼</span>
+          </div>
+        )}
+        {/* Lock overlay */}
+        <div style={{
+          position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
+          background: "rgba(0,0,0,.35)", backdropFilter: "blur(2px)",
+        }}>
+          <div style={{
+            background: "rgba(255,255,255,.08)", border: "1px solid rgba(255,255,255,.12)",
+            borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <span style={{ fontSize: 13 }}>🔒</span>
+            <span style={{ color: "#cbd5e1", fontSize: 12, fontWeight: 600 }}>Pay to unlock</span>
+          </div>
+        </div>
+        {/* Price badge */}
+        <div style={{
+          position: "absolute", top: 10, right: 10,
+          background: "#10b981", color: "#fff",
+          borderRadius: 8, padding: "3px 10px", fontSize: 12, fontWeight: 700,
+          boxShadow: "0 2px 8px rgba(16,185,129,.4)",
+        }}>
+          {price} BSA
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ padding: "14px 16px 16px" }}>
+        <div style={{
+          fontSize: 13, fontWeight: 600, color: "#f1f5f9", marginBottom: 10,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {img.attributs_image.filter(t => t !== "untagged").join(", ") || img.image_name.replace(/^photo_\d+_\w+\.jpg$/, "Sans titre")}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 12 }}>
+          {img.attributs_image.map(t => (
+            <span key={t} style={{
+              background: `${tagColor(t)}22`, border: `1px solid ${tagColor(t)}55`,
+              color: tagColor(t), borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 500,
+            }}>{t}</span>
+          ))}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ color: "#64748b", fontSize: 11, background: "#1e293b", borderRadius: 6, padding: "2px 8px" }}>
+            {img.owner_ID.slice(0, 8)}…
+          </span>
+          <span style={{ color: "#475569", fontSize: 11 }}>{timeAgo(img.created_at)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Main page
+// ============================================================
+
 export default function MarketplacePage() {
-  const [images, setImages] = useState<ImageMeta[]>([]);
-  const [allTags, setAllTags] = useState<string[]>([]);
-  const [searchTags, setSearchTags] = useState("");
-  const [totalCount, setTotalCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [selectedImage, setSelectedImage] = useState<ImageMeta | null>(null);
-  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
+  const [images, setImages]           = useState<ImageMeta[]>([]);
+  const [allTags, setAllTags]         = useState<string[]>([]);
+  const [search, setSearch]           = useState("");
+  const [activeTag, setActiveTag]     = useState("");
+  const [totalCount, setTotalCount]   = useState(0);
+  const [loading, setLoading]         = useState(true);
+  const [selected, setSelected]       = useState<ImageMeta | null>(null);
+  const [downloadStatus, setDlStatus] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [lastRefresh, setLastRefresh] = useState<string>("");
+  const [lastRefresh, setLastRefresh] = useState("");
+
+  // ── Data fetching ──────────────────────────────────────────
 
   const fetchImages = useCallback(async (tags?: string) => {
     try {
       const q = tags ? `?tags=${encodeURIComponent(tags)}&limit=50` : "?limit=50";
-      const res = await fetch(`/api/images/search${q}`);
+      const res  = await fetch(`/api/images/search${q}`);
       const data = await res.json();
       setImages(data.images ?? []);
       setTotalCount(data.count ?? 0);
@@ -65,7 +183,7 @@ export default function MarketplacePage() {
 
   const fetchTags = useCallback(async () => {
     try {
-      const res = await fetch("/api/tags");
+      const res  = await fetch("/api/tags");
       const data = await res.json();
       setAllTags(data.tags ?? []);
     } catch (e) {
@@ -73,342 +191,248 @@ export default function MarketplacePage() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchImages();
-    fetchTags();
-  }, [fetchImages, fetchTags]);
+  useEffect(() => { fetchImages(); fetchTags(); }, [fetchImages, fetchTags]);
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(() => {
-      fetchImages(searchTags || undefined);
-      fetchTags();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [autoRefresh, searchTags, fetchImages, fetchTags]);
+    const id = setInterval(() => { fetchImages(activeTag || search || undefined); fetchTags(); }, 5000);
+    return () => clearInterval(id);
+  }, [autoRefresh, activeTag, search, fetchImages, fetchTags]);
 
-  const handleSearch = () => {
+  // ── Actions ───────────────────────────────────────────────
+
+  const applyTag = (tag: string) => {
+    const next = activeTag === tag ? "" : tag;
+    setActiveTag(next);
+    setSearch("");
     setLoading(true);
-    fetchImages(searchTags || undefined);
+    fetchImages(next || undefined);
   };
 
-  const handleTagClick = (tag: string) => {
-    setSearchTags(tag);
+  const applySearch = () => {
+    setActiveTag("");
     setLoading(true);
-    fetchImages(tag);
+    fetchImages(search || undefined);
+  };
+
+  const clearFilter = () => {
+    setSearch(""); setActiveTag("");
+    setLoading(true); fetchImages();
   };
 
   const handleDownload = async (id: string) => {
-    setDownloadStatus("requesting...");
+    setDlStatus("requesting…");
     try {
       const res = await fetch(`/api/images/${id}/download`);
       if (res.status === 402) {
         const data = await res.json();
-        setDownloadStatus(`402 Payment Required — ${data.description || "Pay to download"}`);
+        setDlStatus(`402 Payment Required — ${data.description ?? "Pay to download"}`);
       } else if (res.ok) {
         const data = await res.json();
-        // Trigger browser download of the image
         const link = document.createElement("a");
-        link.href = `data:image/jpeg;base64,${data.image_data}`;
+        link.href     = `data:image/jpeg;base64,${data.image_data}`;
         link.download = data.image_name;
         link.click();
-        setDownloadStatus("✅ Downloaded!");
+        setDlStatus("✅ Downloaded!");
       } else {
-        setDownloadStatus(`Error ${res.status}`);
+        setDlStatus(`Error ${res.status}`);
       }
-    } catch {
-      setDownloadStatus("Network error");
-    }
+    } catch { setDlStatus("Network error"); }
   };
 
+  // ── Render ────────────────────────────────────────────────
+
   return (
-    <>
-      {/* Nav */}
-      <nav className="nav">
-        <Link href="/" className="nav-logo">
-          BSA <span>Marketplace</span>
+    <div style={{ minHeight: "100vh", background: "#020817", color: "#f1f5f9", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
+
+      {/* NAV */}
+      <nav style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "0 32px", height: 56,
+        borderBottom: "1px solid #1e293b",
+        background: "rgba(2,8,23,.9)", backdropFilter: "blur(12px)",
+        position: "sticky", top: 0, zIndex: 100,
+      }}>
+        <Link href="/" style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}>
+          <span style={{ fontWeight: 800, fontSize: 16, color: "#f1f5f9" }}>BSA</span>
+          <span style={{ fontWeight: 800, fontSize: 16, color: "#06b6d4" }}>Marketplace</span>
         </Link>
-        <div className="nav-links">
-          <Link href="/" className="nav-link">Home</Link>
-          <Link href="/quickstart" className="nav-link">Quickstart</Link>
+        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          <Link href="/"          style={{ color: "#64748b", fontSize: 13, textDecoration: "none" }}>Home</Link>
+          <Link href="/quickstart" style={{ color: "#64748b", fontSize: 13, textDecoration: "none" }}>Quickstart</Link>
           <div
-            style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", userSelect: "none" }}
-            onClick={() => setAutoRefresh(!autoRefresh)}
+            onClick={() => setAutoRefresh(v => !v)}
+            style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
           >
-            <div style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: autoRefresh ? "var(--success)" : "var(--muted)",
-              transition: "background 0.3s",
-            }} />
-            <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>
+            <div style={{ width: 7, height: 7, borderRadius: "50%", background: autoRefresh ? "#10b981" : "#475569", boxShadow: autoRefresh ? "0 0 6px #10b981" : "none", transition: "all .3s" }} />
+            <span style={{ color: autoRefresh ? "#10b981" : "#475569", fontSize: 12, fontWeight: 600 }}>
               {autoRefresh ? "Live" : "Paused"}
             </span>
           </div>
         </div>
       </nav>
 
-      {/* Header */}
-      <section style={{ maxWidth: 1000, margin: "0 auto", padding: "2.5rem 2rem 1rem" }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: "1rem", marginBottom: "0.5rem" }}>
-          <h1 style={{ fontSize: "1.8rem", fontWeight: 800, letterSpacing: "-0.02em" }}>
-            Image Marketplace
-          </h1>
-          <span style={{
-            background: "rgba(6, 182, 212, 0.1)", border: "1px solid rgba(6, 182, 212, 0.3)",
-            color: "var(--cyan)", padding: "0.2rem 0.6rem", borderRadius: 999,
-            fontSize: "0.75rem", fontWeight: 600,
-          }}>
-            {totalCount} image{totalCount !== 1 ? "s" : ""}
-          </span>
-        </div>
-        <p style={{ color: "var(--muted)", fontSize: "0.95rem", marginBottom: "1.5rem" }}>
-          Images uploaded via Telegram. Preview is free — download requires x402 payment.
-        </p>
+      <div style={{ maxWidth: 1040, margin: "0 auto", padding: "40px 24px 64px" }}>
 
-        {/* Search bar */}
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
-          <input
-            type="text"
-            placeholder="Search by tags (comma-separated)..."
-            value={searchTags}
-            onChange={(e) => setSearchTags(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            style={{
-              flex: 1, background: "var(--bg-input)", border: "1px solid var(--border)",
-              borderRadius: 8, padding: "0.6rem 1rem", color: "var(--text)",
-              fontSize: "0.9rem", outline: "none",
-            }}
-          />
-          <button onClick={handleSearch} style={{
-            background: "var(--blue)", color: "white", border: "none",
-            borderRadius: 8, padding: "0.6rem 1.2rem", fontWeight: 600,
-            fontSize: "0.9rem", cursor: "pointer",
+        {/* HEADER */}
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+            <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", margin: 0 }}>
+              Image Marketplace
+            </h1>
+            <div style={{
+              background: "rgba(6,182,212,.1)", border: "1px solid rgba(6,182,212,.25)",
+              color: "#06b6d4", borderRadius: 20, padding: "2px 12px", fontSize: 12, fontWeight: 600,
+            }}>
+              {totalCount} image{totalCount !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <p style={{ color: "#475569", fontSize: 14, margin: 0 }}>
+            Images uploaded via Telegram · Preview free · Download requires x402 payment
+          </p>
+        </div>
+
+        {/* SEARCH */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+          <div style={{ flex: 1, position: "relative" }}>
+            <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#475569", fontSize: 14 }}>🔍</span>
+            <input
+              value={search}
+              onChange={e => { setSearch(e.target.value); setActiveTag(""); }}
+              onKeyDown={e => { if (e.key === "Enter") applySearch(); if (e.key === "Escape") clearFilter(); }}
+              placeholder="Search by tag or filename…"
+              style={{
+                width: "100%", boxSizing: "border-box",
+                background: "#0f172a", border: "1px solid #1e293b",
+                borderRadius: 10, padding: "10px 14px 10px 40px",
+                color: "#f1f5f9", fontSize: 14, outline: "none",
+              }}
+            />
+          </div>
+          <button onClick={applySearch} style={{
+            background: "#3b82f6", color: "#fff", border: "none",
+            borderRadius: 10, padding: "0 20px", fontWeight: 600, fontSize: 14, cursor: "pointer",
           }}>Search</button>
-          {searchTags && (
-            <button onClick={() => { setSearchTags(""); setLoading(true); fetchImages(); }} style={{
-              background: "transparent", color: "var(--muted)", border: "1px solid var(--border)",
-              borderRadius: 8, padding: "0.6rem 1rem", fontSize: "0.9rem", cursor: "pointer",
+          {(search || activeTag) && (
+            <button onClick={clearFilter} style={{
+              background: "transparent", border: "1px solid #1e293b",
+              color: "#64748b", borderRadius: 10, padding: "0 16px", fontSize: 13, cursor: "pointer",
             }}>Clear</button>
           )}
         </div>
 
-        {/* Tag pills */}
+        {/* TAG PILLS */}
         {allTags.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "1.5rem" }}>
-            {allTags.map((tag) => (
-              <button key={tag} onClick={() => handleTagClick(tag)} style={{
-                background: searchTags === tag ? "rgba(6, 182, 212, 0.2)" : "rgba(255,255,255,0.05)",
-                border: `1px solid ${searchTags === tag ? "var(--cyan)" : "var(--border)"}`,
-                color: searchTags === tag ? "var(--cyan)" : "var(--muted)",
-                borderRadius: 999, padding: "0.25rem 0.7rem", fontSize: "0.78rem",
-                cursor: "pointer", transition: "all 0.2s",
-              }}>{tag}</button>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 32 }}>
+            {allTags.map(t => (
+              <TagPill key={t} tag={t} active={activeTag === t} onClick={() => applyTag(t)} />
             ))}
           </div>
         )}
-      </section>
 
-      {/* Grid */}
-      <section style={{ maxWidth: 1000, margin: "0 auto", padding: "0 2rem 3rem" }}>
+        {/* GRID */}
         {loading ? (
-          <div style={{ textAlign: "center", color: "var(--muted)", padding: "3rem" }}>Loading...</div>
+          <div style={{ textAlign: "center", color: "#475569", padding: "64px 0" }}>Loading…</div>
         ) : images.length === 0 ? (
-          <div style={{
-            textAlign: "center", color: "var(--muted)", padding: "4rem 2rem",
-            background: "var(--bg-card)", borderRadius: 12, border: "1px solid var(--border)",
-          }}>
-            <div style={{ fontSize: "2.5rem", marginBottom: "1rem", opacity: 0.4 }}>{"{ }"}</div>
-            <p style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>No images yet</p>
-            <p style={{ fontSize: "0.85rem" }}>Send a photo to your Telegram bot to list it here.</p>
+          <div style={{ textAlign: "center", padding: "64px 24px", background: "#0f172a", borderRadius: 16, border: "1px solid #1e293b" }}>
+            <div style={{ fontSize: 40, marginBottom: 16, opacity: .2 }}>📭</div>
+            <p style={{ color: "#475569", margin: 0 }}>No images yet — send a photo to your Telegram bot.</p>
           </div>
         ) : (
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-            gap: "1rem",
-          }}>
-            {images.map((img) => (
-              <div
-                key={img.id}
-                onClick={() => { setSelectedImage(img); setDownloadStatus(null); }}
-                style={{
-                  background: "var(--bg-card)", border: "1px solid var(--border)",
-                  borderRadius: 12, overflow: "hidden", cursor: "pointer",
-                  transition: "border-color 0.2s, transform 0.2s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "var(--blue-light)";
-                  e.currentTarget.style.transform = "translateY(-2px)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "var(--border)";
-                  e.currentTarget.style.transform = "translateY(0)";
-                }}
-              >
-                {/* Image preview — blurred */}
-                <div style={{ position: "relative", width: "100%", height: 180, overflow: "hidden", background: "#0a1628" }}>
-                  {img.image_data ? (
-                    <>
-                      <img
-                        src={`data:image/jpeg;base64,${img.image_data}`}
-                        alt={img.image_name}
-                        style={{
-                          width: "100%", height: "100%", objectFit: "cover",
-                          filter: "blur(6px)", transform: "scale(1.1)",
-                        }}
-                      />
-                      <div style={{
-                        position: "absolute", inset: 0, display: "flex",
-                        alignItems: "center", justifyContent: "center",
-                        background: "rgba(0,0,0,0.4)",
-                      }}>
-                        <span style={{ fontSize: "0.8rem", color: "var(--cyan)", fontWeight: 600 }}>
-                          🔒 Pay to unlock
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <span style={{ fontSize: "2rem", opacity: 0.3 }}>🖼️</span>
-                    </div>
-                  )}
-                  {/* Price badge */}
-                  <div style={{
-                    position: "absolute", top: 8, right: 8,
-                    background: "rgba(34, 197, 94, 0.9)", color: "#000",
-                    padding: "0.2rem 0.6rem", borderRadius: 6,
-                    fontSize: "0.75rem", fontWeight: 700,
-                  }}>
-                    {atomicToUSD(img.price)} BSA
-                  </div>
-                </div>
-
-                {/* Card body */}
-                <div style={{ padding: "1rem" }}>
-                  <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.5rem", wordBreak: "break-word" }}>
-                    {img.image_name}
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginBottom: "0.75rem" }}>
-                    {img.attributs_image.map((tag) => (
-                      <span key={tag} style={{
-                        background: "rgba(255,255,255,0.06)", border: "1px solid var(--border)",
-                        color: "var(--muted)", borderRadius: 4, padding: "0.1rem 0.45rem", fontSize: "0.72rem",
-                      }}>{tag}</span>
-                    ))}
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)", fontSize: "0.75rem" }}>
-                    <span>by {img.owner_ID}</span>
-                    <span>{timeAgo(img.created_at)}</span>
-                  </div>
-                </div>
-              </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 16 }}>
+            {images.map(img => (
+              <ImageCard key={img.id} img={img} onClick={() => { setSelected(img); setDlStatus(null); }} />
             ))}
           </div>
         )}
 
-        <div style={{ textAlign: "center", color: "var(--muted)", fontSize: "0.75rem", marginTop: "1.5rem", opacity: 0.6 }}>
-          {lastRefresh && `Last refresh: ${lastRefresh}`}
-          {autoRefresh && " — auto-refreshing every 5s"}
-        </div>
-      </section>
+        {/* FOOTER HINT */}
+        {lastRefresh && (
+          <p style={{ textAlign: "center", color: "#334155", fontSize: 11, marginTop: 32 }}>
+            Last refresh: {lastRefresh}{autoRefresh ? " · auto every 5s" : ""}
+          </p>
+        )}
+      </div>
 
-      {/* Modal */}
-      {selectedImage && (
-        <div
-          onClick={() => setSelectedImage(null)}
-          style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
-            backdropFilter: "blur(8px)", zIndex: 1000,
-            display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem",
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "var(--bg-card)", border: "1px solid var(--border)",
-              borderRadius: 16, padding: "2rem", maxWidth: 480, width: "100%", position: "relative",
-            }}
-          >
-            <button onClick={() => setSelectedImage(null)} style={{
-              position: "absolute", top: 12, right: 12, background: "transparent",
-              border: "none", color: "var(--muted)", fontSize: "1.2rem", cursor: "pointer",
-            }}>×</button>
+      {/* MODAL */}
+      {selected && (
+        <div onClick={() => setSelected(null)} style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,.75)",
+          backdropFilter: "blur(8px)", zIndex: 200,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#0f172a", border: "1px solid #1e293b",
+            borderRadius: 20, padding: 28, maxWidth: 440, width: "100%", position: "relative",
+          }}>
+            <button onClick={() => setSelected(null)} style={{
+              position: "absolute", top: 14, right: 14,
+              background: "#1e293b", border: "none", color: "#94a3b8",
+              width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontSize: 14,
+            }}>✕</button>
 
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 700, marginBottom: "1rem" }}>
-              {selectedImage.image_name}
+            <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 18, paddingRight: 36, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {selected.attributs_image.filter(t => t !== "untagged").join(", ") || "Sans titre"}
             </h2>
 
-            {/* Blurred preview in modal */}
-            {selectedImage.image_data && (
-              <div style={{ position: "relative", borderRadius: 8, overflow: "hidden", marginBottom: "1rem", height: 200 }}>
-                <img
-                  src={`data:image/jpeg;base64,${selectedImage.image_data}`}
-                  alt={selectedImage.image_name}
-                  style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(8px)", transform: "scale(1.1)" }}
-                />
-                <div style={{
-                  position: "absolute", inset: 0, display: "flex", flexDirection: "column",
-                  alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", gap: "0.5rem",
-                }}>
-                  <span style={{ fontSize: "1.5rem" }}>🔒</span>
-                  <span style={{ color: "var(--cyan)", fontWeight: 600, fontSize: "0.9rem" }}>
-                    Pay {atomicToUSD(selectedImage.price)} BSA USD to unlock
-                  </span>
+            {/* Blurred preview */}
+            <div style={{ height: 180, borderRadius: 12, overflow: "hidden", background: "#1e293b", marginBottom: 20, position: "relative" }}>
+              {selected.image_data ? (
+                <img src={`data:image/jpeg;base64,${selected.image_data}`} alt={selected.image_name}
+                  style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(9px)", transform: "scale(1.1)" }} />
+              ) : (
+                <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: 50, opacity: .1 }}>🖼</span>
                 </div>
+              )}
+              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(0,0,0,.5)" }}>
+                <span style={{ fontSize: 28 }}>🔒</span>
+                <span style={{ color: "#06b6d4", fontWeight: 600, fontSize: 13 }}>
+                  Pay {atomicToUSD(selected.price)} BSA USD to unlock
+                </span>
               </div>
-            )}
+            </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", padding: "0.75rem 1rem", background: "rgba(34, 197, 94, 0.06)", border: "1px solid rgba(34, 197, 94, 0.15)", borderRadius: 8 }}>
-                <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Price</span>
-                <span style={{ color: "var(--success)", fontWeight: 700 }}>{atomicToUSD(selectedImage.price)} BSA USD</span>
+            {/* Info */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", background: "rgba(16,185,129,.07)", border: "1px solid rgba(16,185,129,.15)", borderRadius: 10, padding: "10px 14px" }}>
+                <span style={{ color: "#64748b", fontSize: 13 }}>Price</span>
+                <span style={{ color: "#10b981", fontWeight: 700, fontSize: 13 }}>{atomicToUSD(selected.price)} BSA USD</span>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>Owner</span>
-                <span style={{ fontSize: "0.85rem" }}>{selectedImage.owner_ID}</span>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "0 4px" }}>
+                <span style={{ color: "#475569", fontSize: 13 }}>Owner</span>
+                <span style={{ color: "#94a3b8", fontSize: 13, fontFamily: "monospace" }}>{selected.owner_ID}</span>
               </div>
-              <div>
-                <span style={{ color: "var(--muted)", fontSize: "0.85rem", display: "block", marginBottom: "0.4rem" }}>Tags</span>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
-                  {selectedImage.attributs_image.map((tag) => (
-                    <span key={tag} style={{
-                      background: "rgba(6, 182, 212, 0.1)", border: "1px solid rgba(6, 182, 212, 0.25)",
-                      color: "var(--cyan)", borderRadius: 4, padding: "0.15rem 0.5rem", fontSize: "0.78rem",
-                    }}>{tag}</span>
+              <div style={{ padding: "0 4px" }}>
+                <span style={{ color: "#475569", fontSize: 13, display: "block", marginBottom: 8 }}>Tags</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {selected.attributs_image.map(t => (
+                    <span key={t} style={{ background: `${tagColor(t)}22`, border: `1px solid ${tagColor(t)}55`, color: tagColor(t), borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 500 }}>{t}</span>
                   ))}
                 </div>
               </div>
-
-              <button
-                onClick={() => handleDownload(selectedImage.id)}
-                style={{
-                  marginTop: "0.5rem",
-                  background: "linear-gradient(135deg, var(--blue), var(--cyan))",
-                  color: "white", border: "none", borderRadius: 8, padding: "0.75rem",
-                  fontWeight: 600, fontSize: "0.9rem", cursor: "pointer",
-                }}
-              >
-                💳 Pay & Download (x402)
-              </button>
-
-              {downloadStatus && (
-                <div style={{
-                  padding: "0.6rem 0.8rem", borderRadius: 8, fontSize: "0.8rem",
-                  background: downloadStatus.startsWith("402") ? "rgba(6, 182, 212, 0.07)" : downloadStatus.includes("✅") ? "rgba(34, 197, 94, 0.07)" : "rgba(239, 68, 68, 0.07)",
-                  border: `1px solid ${downloadStatus.startsWith("402") ? "rgba(6, 182, 212, 0.25)" : downloadStatus.includes("✅") ? "rgba(34, 197, 94, 0.2)" : "rgba(239, 68, 68, 0.2)"}`,
-                  color: downloadStatus.startsWith("402") ? "var(--cyan)" : downloadStatus.includes("✅") ? "var(--success)" : "var(--error)",
-                }}>
-                  {downloadStatus}
-                </div>
-              )}
             </div>
+
+            <button
+              onClick={() => handleDownload(selected.id)}
+              style={{ width: "100%", padding: 12, borderRadius: 12, border: "none", background: "linear-gradient(135deg,#3b82f6,#06b6d4)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+            >
+              💳 Pay & Download (x402)
+            </button>
+
+            {downloadStatus && (
+              <div style={{
+                marginTop: 12, padding: "8px 12px", borderRadius: 8, fontSize: 12,
+                background: downloadStatus.startsWith("402") ? "rgba(6,182,212,.07)" : downloadStatus.includes("✅") ? "rgba(16,185,129,.07)" : "rgba(239,68,68,.07)",
+                border: `1px solid ${downloadStatus.startsWith("402") ? "rgba(6,182,212,.25)" : downloadStatus.includes("✅") ? "rgba(16,185,129,.2)" : "rgba(239,68,68,.2)"}`,
+                color: downloadStatus.startsWith("402") ? "#06b6d4" : downloadStatus.includes("✅") ? "#10b981" : "#ef4444",
+              }}>
+                {downloadStatus}
+              </div>
+            )}
           </div>
         </div>
       )}
-
-      <footer>
-        <p>Built by <a href="https://github.com/bsaepfl" target="_blank" rel="noopener noreferrer">BSA</a> — Image Marketplace on TON Testnet</p>
-      </footer>
-    </>
+    </div>
   );
 }
