@@ -98,6 +98,7 @@ async function sendTelegramMessage(chatId: number, text: string): Promise<void> 
   }
 }
 
+// Next.js convention, that runs this function when a POST is sent to 
 export async function POST(req: Request) {
   // Telegram expects 200 OK quickly, otherwise it retries
   try {
