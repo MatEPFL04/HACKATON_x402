@@ -3,17 +3,9 @@ import path from "path";
 import crypto from "crypto";
 import type { ImageRecord, SearchParams, ImagePublicMeta } from "./types";
 
-// ============================================================
-// Paths
-// ============================================================
-
 const DATA_DIR = path.join(process.cwd(), "data");
 const IMAGES_DIR = path.join(DATA_DIR, "images");
 const INDEX_FILE = path.join(DATA_DIR, "images.json");
-
-// ============================================================
-// Internal helpers
-// ============================================================
 
 function ensureDirs(): void {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -41,7 +33,7 @@ function writeIndex(records: ImageRecord[]): void {
   fs.writeFileSync(INDEX_FILE, JSON.stringify(records, null, 2), "utf-8");
 }
 
-function toPublicMeta(record: ImageRecord): ImagePublicMeta {
+export function toPublicMeta(record: ImageRecord): ImagePublicMeta {
   return {
     id: record.id,
     image_name: record.image_name,
@@ -49,17 +41,10 @@ function toPublicMeta(record: ImageRecord): ImagePublicMeta {
     price: record.price,
     owner_ID: record.owner_ID,
     created_at: record.created_at,
+    image_data: getImageData(record.id) ?? undefined, // preview floutée côté client
   };
 }
 
-// ============================================================
-// Write (used by Telegram webhook)
-// ============================================================
-
-/**
- * Store a new image with its metadata.
- * Base64 data is written to a separate file to keep the index lightweight.
- */
 export function addImage(
   imageName: string,
   ownerID: string,
@@ -69,7 +54,6 @@ export function addImage(
   base64Data: string,
 ): ImageRecord {
   const id = crypto.randomUUID();
-
   const record: ImageRecord = {
     id,
     image_name: imageName,
@@ -87,24 +71,16 @@ export function addImage(
   records.push(record);
   writeIndex(records);
 
+  console.log(`[image-storage] Added image ${id} (${imageName}) by ${ownerID}`);
   return record;
 }
 
-// ============================================================
-// Read (used by marketplace API)
-// ============================================================
-
-/**
- * Search images with filters and pagination.
- * Tags use AND logic: the image must contain ALL requested tags.
- */
 export function searchImages(params: SearchParams): {
   count: number;
   images: ImagePublicMeta[];
 } {
   let records = readIndex();
 
-  // Filter by tags (AND)
   if (params.tags && params.tags.length > 0) {
     const queryTags = params.tags.map((t) => t.toLowerCase().trim());
     records = records.filter((r) =>
@@ -112,7 +88,6 @@ export function searchImages(params: SearchParams): {
     );
   }
 
-  // Filter by price range (BigInt comparison for atomic units)
   if (params.min_price !== undefined) {
     const min = BigInt(params.min_price);
     records = records.filter((r) => {
@@ -126,20 +101,13 @@ export function searchImages(params: SearchParams): {
     });
   }
 
-  // Filter by owner
   if (params.owner_ID) {
     records = records.filter((r) => r.owner_ID === params.owner_ID);
   }
 
   const count = records.length;
+  records.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-  // Sort newest first
-  records.sort(
-    (a, b) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
-
-  // Paginate
   const offset = params.offset ?? 0;
   const limit = params.limit ?? 20;
   const page = records.slice(offset, offset + limit);
@@ -147,34 +115,21 @@ export function searchImages(params: SearchParams): {
   return { count, images: page.map(toPublicMeta) };
 }
 
-/**
- * Get full record for a single image by ID (includes wallet address).
- */
 export function getImageById(id: string): ImageRecord | undefined {
   return readIndex().find((r) => r.id === id);
 }
 
-/**
- * Read raw base64 image data from disk.
- */
 export function getImageData(id: string): string | null {
   const filePath = path.join(IMAGES_DIR, `${id}.b64`);
   if (!fs.existsSync(filePath)) return null;
   return fs.readFileSync(filePath, "utf-8");
 }
 
-/**
- * All unique tags across every image (sorted alphabetically).
- */
 export function getAllTags(): string[] {
   const records = readIndex();
   const tagSet = new Set<string>();
   for (const r of records) {
-    for (const tag of r.attributs_image) {
-      tagSet.add(tag);
-    }
+    for (const tag of r.attributs_image) tagSet.add(tag);
   }
   return Array.from(tagSet).sort();
 }
-
-export { toPublicMeta };

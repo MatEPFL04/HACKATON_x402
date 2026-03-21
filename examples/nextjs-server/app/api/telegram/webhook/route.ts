@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { addImage } from "../../../../lib/image-storage";
 
+
 // ============================================================
 // POST /api/telegram/webhook
 //
@@ -101,6 +102,9 @@ async function sendTelegramMessage(chatId: number, text: string): Promise<void> 
 // Next.js convention, that runs this function when a POST is sent to 
 export async function POST(req: Request) {
   // Telegram expects 200 OK quickly, otherwise it retries
+
+  console.log("DEBUG:POST Taken")
+  console.log(BOT_TOKEN)
   try {
     if (!BOT_TOKEN) {
       console.error("[webhook] TELEGRAM_BOT_TOKEN not set");
