@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { addImage } from "../../../../lib/image-storage";
+import { extractAttributes } from "../../../../lib/extract-attributes";
 
 // ============================================================
 // Config
@@ -140,12 +141,8 @@ async function handlePrice(
   const base64Data = photoBuffer.toString("base64");
   const imageName = `photo_${state.userId}_${Date.now()}.jpg`;
 
-  // Parse description as tags (comma-separated) + store description
-  const tags = description
-    .split(",")
-    .map((t) => t.trim().toLowerCase())
-    .filter(Boolean);
-  const finalTags = tags.length > 0 ? tags : ["untagged"];
+  // Extract attributes from description using Claude API
+  const finalTags = await extractAttributes(description);
 
   const record = await addImage(
     imageName,
