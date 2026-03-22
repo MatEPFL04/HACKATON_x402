@@ -10,6 +10,42 @@ import { getWallet, saveWallet } from "../../../../lib/user-wallet-store";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 
 // ============================================================
+// AI image detection (SightEngine)
+// Set CHECK_AI_GENERATED to false to disable entirely
+// ============================================================
+
+const CHECK_AI_GENERATED = true;
+const AI_DETECTION_THRESHOLD = 0.7;
+const SIGHTENGINE_API_USER = process.env.SIGHTENGINE_API_USER ?? "";
+const SIGHTENGINE_API_SECRET = process.env.SIGHTENGINE_API_SECRET ?? "";
+
+async function checkAiGenerated(photoBuffer: Buffer): Promise<number | null> {
+  if (!SIGHTENGINE_API_USER || !SIGHTENGINE_API_SECRET) {
+    console.warn("[ai-check] Credentials not set, skipping.");
+    return null;
+  }
+  try {
+    const form = new FormData();
+    const arrayBuffer = photoBuffer.buffer.slice(photoBuffer.byteOffset, photoBuffer.byteOffset + photoBuffer.byteLength) as ArrayBuffer;
+    form.append("media", new Blob([arrayBuffer], { type: "image/jpeg" }), "photo.jpg");
+    form.append("models", "genai");
+    form.append("api_user", SIGHTENGINE_API_USER);
+    form.append("api_secret", SIGHTENGINE_API_SECRET);
+
+    const res = await fetch("https://api.sightengine.com/1.0/check.json", { method: "POST", body: form });
+    if (!res.ok) { console.warn(`[ai-check] SightEngine responded ${res.status}, skipping.`); return null; }
+
+    const data = await res.json();
+    const score: number = data?.type?.ai_generated ?? 0;
+    console.log(`[ai-check] AI score: ${score}`);
+    return score;
+  } catch (e) {
+    console.warn("[ai-check] SightEngine call failed, skipping:", e);
+    return null;
+  }
+}
+
+// ============================================================
 // Conversation state machine (in-memory)
 // ============================================================
 
@@ -24,6 +60,10 @@ interface ConvState {
   wallet?: string;
   userId: number;
   updatedAt: number;
+  // Pre-fetched in background while user types
+  photoBufferPromise?: Promise<Buffer>;
+  aiScorePromise?: Promise<number | null>;
+  tagsPromise?: Promise<string[]>;
 }
 
 // chatId → state
@@ -98,6 +138,17 @@ async function handleImage(chatId: number, fileId: string, state: ConvState) {
   state.fileId = fileId;
   state.step = "WAIT_DESCRIPTION";
   state.updatedAt = Date.now();
+
+  // Start download in background while user types description
+  state.photoBufferPromise = downloadFile(fileId);
+
+  // Start AI check in background (chains on the download)
+  if (CHECK_AI_GENERATED) {
+    state.aiScorePromise = state.photoBufferPromise
+      .then(buf => checkAiGenerated(buf))
+      .catch(() => null);
+  }
+
   const total = getWallet(state.userId) ? "3" : "4";
   await send(
     chatId,
@@ -114,6 +165,10 @@ async function handleDescription(chatId: number, text: string, state: ConvState)
   state.description = text.trim();
   state.step = "WAIT_PRICE";
   state.updatedAt = Date.now();
+
+  // Start tag extraction in background while user types price
+  state.tagsPromise = extractAttributes(state.description);
+
   const total = getWallet(state.userId) ? "3" : "4";
   await send(
     chatId,
@@ -123,23 +178,48 @@ async function handleDescription(chatId: number, text: string, state: ConvState)
 }
 
 async function finalizeListing(chatId: number, wallet: string, state: ConvState) {
-  const fileId = state.fileId!;
-  const description = state.description!;
   const priceAtomic = state.priceAtomic!;
   const priceDisplay = state.priceDisplay!;
+  const description = state.description!;
 
+  // Await pre-started promises (should already be resolved by now)
   let photoBuffer: Buffer;
   try {
-    photoBuffer = await downloadFile(fileId);
+    photoBuffer = await (state.photoBufferPromise ?? downloadFile(state.fileId!));
   } catch (e) {
     await send(chatId, "❌ Impossible de télécharger la photo. Recommence avec /start.");
     sessions.delete(chatId);
     return;
   }
 
+  if (CHECK_AI_GENERATED) {
+    const aiScore = await (state.aiScorePromise ?? checkAiGenerated(photoBuffer));
+    if (aiScore !== null && aiScore >= AI_DETECTION_THRESHOLD) {
+      await send(
+        chatId,
+        `❌ <b>Image refusée.</b>\n\n` +
+        `Notre système détecte que cette image a probablement été générée par une IA (score : ${(aiScore * 100).toFixed(0)}%).\n\n` +
+        `MAR Pictures n'accepte que des vraies photos prises par des humains. Réessaie avec /start.`
+      );
+      sessions.delete(chatId);
+      return;
+    }
+  }
+
+  const finalTags = await (state.tagsPromise ?? extractAttributes(description));
+
+  if (finalTags.length === 1 && finalTags[0] === "bad-description") {
+    await send(
+      chatId,
+      "❌ <b>Description insuffisante.</b>\n\n" +
+      "Nous n'avons pas pu extraire des tags pertinents de ta description.\n\n" +
+      "Décris ta photo plus précisément (sujet, décor, ambiance, couleurs…) et recommence avec /start."
+    );
+    sessions.delete(chatId);
+    return;
+  }
   const base64Data = photoBuffer.toString("base64");
   const imageName = `photo_${state.userId}_${Date.now()}.jpg`;
-  const finalTags = await extractAttributes(description);
 
   const record = await addImage(
     imageName,

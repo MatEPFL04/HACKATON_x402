@@ -16,23 +16,23 @@ export async function extractAttributes(description: string): Promise<string[]> 
       model: "claude-opus-4-6",
       max_tokens: 512,
       system:
-        "You are a product tagging assistant for a marketplace. " +
-        "You always respond with valid JSON only, no explanation, no markdown." +
-        "You never invent new characteristics." +
-        "If description isn't clear or unsufficient only put 1 tag and the tag : unknown-product",
+        "You are a photo tagging assistant for an image marketplace where AI agents search for real human-taken photos. " +
+        "Your tags must be useful for semantic search — an AI agent might search for 'two people overhead view' or 'gray jogger street'. " +
+        "Always respond with valid JSON only, no explanation, no markdown.",
       messages: [
         {
           role: "user",
-          content: `Given this product description, extract a list of concise, relevant attributes/tags.
+          content: `Extract search tags from this photo description.
 
 Rules:
-- Return between 3 and 10 tags
-- Each tag must be lowercase, no accents, no special characters (letters, digits, hyphens only)
-- Tags should cover: product category, material, color, style, condition, brand (if mentioned), and any other key characteristics
-- Be specific but not overly granular
+- Return 3 to 10 tags in English (description may be in any language)
+- Each tag: lowercase, no accents, only letters/digits/hyphens
+- Cover as many of these as apply: subjects (people/objects/animals), setting (indoor/outdoor/urban/nature), action or pose, colors, clothing, mood, lighting, camera angle, number of people
+- Be specific: prefer "gray-jogger" over "clothes", "overhead-view" over "photo"
+- Only return {"tags": ["bad-description"]} if the input is completely unintelligible or empty — a short or imperfect description still gets real tags
 - Output ONLY valid JSON: {"tags": ["tag1", "tag2", "tag3"]}
 
-Product description: ${description}`,
+Photo description: ${description}`,
         },
       ],
     });
