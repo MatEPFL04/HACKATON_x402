@@ -49,23 +49,6 @@ function tagColor(tag: string): string {
 // Sub-components
 // ============================================================
 
-function TagPill({ tag, active, onClick }: { tag: string; active: boolean; onClick: () => void }) {
-  const c = tagColor(tag);
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        background:    active ? `${c}22` : "transparent",
-        border:        `1px solid ${active ? `${c}88` : "#1e293b"}`,
-        color:         active ? c : "#475569",
-        borderRadius:  20, padding: "4px 14px",
-        fontSize: 12, fontWeight: 500, cursor: "pointer", transition: "all .15s",
-      }}
-    >
-      {tag}
-    </button>
-  );
-}
 
 function ImageCard({ img, onClick }: { img: ImageMeta; onClick: () => void }) {
   const [hov, setHov] = useState(false);
@@ -90,7 +73,7 @@ function ImageCard({ img, onClick }: { img: ImageMeta; onClick: () => void }) {
           <img
             src={`data:image/jpeg;base64,${img.image_data}`}
             alt={img.image_name}
-            style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(7px)", transform: "scale(1.1)" }}
+            style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(3px)", transform: "scale(1.05)" }}
           />
         ) : (
           <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -154,9 +137,8 @@ function ImageCard({ img, onClick }: { img: ImageMeta; onClick: () => void }) {
 
 export default function MarketplacePage() {
   const [images, setImages]           = useState<ImageMeta[]>([]);
-  const [allTags, setAllTags]         = useState<string[]>([]);
-  const [search, setSearch]           = useState("");
-  const [activeTag, setActiveTag]     = useState("");
+  const [tagInput, setTagInput]       = useState("");
+  const [activeTags, setActiveTags]   = useState<string[]>([]);
   const [totalCount, setTotalCount]   = useState(0);
   const [loading, setLoading]         = useState(true);
   const [selected, setSelected]       = useState<ImageMeta | null>(null);
@@ -181,43 +163,38 @@ export default function MarketplacePage() {
     }
   }, []);
 
-  const fetchTags = useCallback(async () => {
-    try {
-      const res  = await fetch("/api/tags");
-      const data = await res.json();
-      setAllTags(data.tags ?? []);
-    } catch (e) {
-      console.error("Fetch tags failed:", e);
-    }
-  }, []);
-
-  useEffect(() => { fetchImages(); fetchTags(); }, [fetchImages, fetchTags]);
+  useEffect(() => { fetchImages(); }, [fetchImages]);
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const id = setInterval(() => { fetchImages(activeTag || search || undefined); fetchTags(); }, 5000);
+    const id = setInterval(() => { fetchImages(activeTags.join(",") || undefined); }, 5000);
     return () => clearInterval(id);
-  }, [autoRefresh, activeTag, search, fetchImages, fetchTags]);
+  }, [autoRefresh, activeTags, fetchImages]);
 
   // ── Actions ───────────────────────────────────────────────
 
-  const applyTag = (tag: string) => {
-    const next = activeTag === tag ? "" : tag;
-    setActiveTag(next);
-    setSearch("");
+  const addTag = (raw: string) => {
+    const tag = raw.trim().toLowerCase();
+    if (!tag || activeTags.includes(tag) || activeTags.length >= 10) return;
+    const next = [...activeTags, tag];
+    setActiveTags(next);
+    setTagInput("");
     setLoading(true);
-    fetchImages(next || undefined);
+    fetchImages(next.join(","));
   };
 
-  const applySearch = () => {
-    setActiveTag("");
+  const removeTag = (tag: string) => {
+    const next = activeTags.filter(t => t !== tag);
+    setActiveTags(next);
     setLoading(true);
-    fetchImages(search || undefined);
+    fetchImages(next.join(",") || undefined);
   };
 
   const clearFilter = () => {
-    setSearch(""); setActiveTag("");
-    setLoading(true); fetchImages();
+    setActiveTags([]);
+    setTagInput("");
+    setLoading(true);
+    fetchImages();
   };
 
   const handleDownload = async (id: string) => {
@@ -258,8 +235,7 @@ export default function MarketplacePage() {
           <span style={{ fontWeight: 800, fontSize: 16, color: "#06b6d4" }}>Marketplace</span>
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-          <Link href="/"          style={{ color: "#64748b", fontSize: 13, textDecoration: "none" }}>Home</Link>
-          <Link href="/quickstart" style={{ color: "#64748b", fontSize: 13, textDecoration: "none" }}>Quickstart</Link>
+          <Link href="/" style={{ color: "#64748b", fontSize: 13, textDecoration: "none" }}>Home</Link>
           <div
             onClick={() => setAutoRefresh(v => !v)}
             style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
@@ -293,42 +269,58 @@ export default function MarketplacePage() {
         </div>
 
         {/* SEARCH */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-          <div style={{ flex: 1, position: "relative" }}>
-            <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#475569", fontSize: 14 }}>🔍</span>
-            <input
-              value={search}
-              onChange={e => { setSearch(e.target.value); setActiveTag(""); }}
-              onKeyDown={e => { if (e.key === "Enter") applySearch(); if (e.key === "Escape") clearFilter(); }}
-              placeholder="Search by tag or filename…"
-              style={{
-                width: "100%", boxSizing: "border-box",
-                background: "#0f172a", border: "1px solid #1e293b",
-                borderRadius: 10, padding: "10px 14px 10px 40px",
-                color: "#f1f5f9", fontSize: 14, outline: "none",
-              }}
-            />
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ display: "flex", gap: 10, marginBottom: activeTags.length > 0 ? 12 : 0 }}>
+            <div style={{ flex: 1, position: "relative" }}>
+              <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#475569", fontSize: 14 }}>🔍</span>
+              <input
+                value={tagInput}
+                onChange={e => setTagInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagInput); }
+                  if (e.key === "Escape") clearFilter();
+                  if (e.key === "Backspace" && tagInput === "" && activeTags.length > 0) removeTag(activeTags[activeTags.length - 1]);
+                }}
+                placeholder={activeTags.length >= 10 ? "Max 10 tags reached" : "Add a tag and press Enter…"}
+                disabled={activeTags.length >= 10}
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  background: "#0f172a", border: "1px solid #1e293b",
+                  borderRadius: 10, padding: "10px 14px 10px 40px",
+                  color: "#f1f5f9", fontSize: 14, outline: "none",
+                  opacity: activeTags.length >= 10 ? 0.5 : 1,
+                }}
+              />
+            </div>
+            <button onClick={() => addTag(tagInput)} style={{
+              background: "#3b82f6", color: "#fff", border: "none",
+              borderRadius: 10, padding: "0 20px", fontWeight: 600, fontSize: 14, cursor: "pointer",
+            }}>Add</button>
+            {activeTags.length > 0 && (
+              <button onClick={clearFilter} style={{
+                background: "transparent", border: "1px solid #1e293b",
+                color: "#64748b", borderRadius: 10, padding: "0 16px", fontSize: 13, cursor: "pointer",
+              }}>Clear</button>
+            )}
           </div>
-          <button onClick={applySearch} style={{
-            background: "#3b82f6", color: "#fff", border: "none",
-            borderRadius: 10, padding: "0 20px", fontWeight: 600, fontSize: 14, cursor: "pointer",
-          }}>Search</button>
-          {(search || activeTag) && (
-            <button onClick={clearFilter} style={{
-              background: "transparent", border: "1px solid #1e293b",
-              color: "#64748b", borderRadius: 10, padding: "0 16px", fontSize: 13, cursor: "pointer",
-            }}>Clear</button>
+          {activeTags.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {activeTags.map(t => {
+                const c = tagColor(t);
+                return (
+                  <button key={t} onClick={() => removeTag(t)} style={{
+                    background: `${c}22`, border: `1px solid ${c}88`,
+                    color: c, borderRadius: 20, padding: "4px 10px 4px 14px",
+                    fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+                  }}>
+                    {t} <span style={{ fontSize: 10, opacity: 0.7 }}>✕</span>
+                  </button>
+                );
+              })}
+              <span style={{ color: "#334155", fontSize: 12, alignSelf: "center" }}>{activeTags.length}/10</span>
+            </div>
           )}
         </div>
-
-        {/* TAG PILLS */}
-        {allTags.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 32 }}>
-            {allTags.map(t => (
-              <TagPill key={t} tag={t} active={activeTag === t} onClick={() => applyTag(t)} />
-            ))}
-          </div>
-        )}
 
         {/* GRID */}
         {loading ? (
@@ -379,7 +371,7 @@ export default function MarketplacePage() {
             <div style={{ height: 180, borderRadius: 12, overflow: "hidden", background: "#1e293b", marginBottom: 20, position: "relative" }}>
               {selected.image_data ? (
                 <img src={`data:image/jpeg;base64,${selected.image_data}`} alt={selected.image_name}
-                  style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(9px)", transform: "scale(1.1)" }} />
+                  style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(4px)", transform: "scale(1.05)" }} />
               ) : (
                 <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <span style={{ fontSize: 50, opacity: .1 }}>🖼</span>
