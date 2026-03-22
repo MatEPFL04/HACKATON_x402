@@ -50,6 +50,29 @@ function tagColor(tag: string): string {
 // ============================================================
 
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={e => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      title="Copy ID"
+      style={{
+        background: "none", border: "none", cursor: "pointer",
+        color: copied ? "#10b981" : "#475569", fontSize: 11,
+        padding: "0 4px", lineHeight: 1, flexShrink: 0,
+      }}
+    >
+      {copied ? "✓" : "⎘"}
+    </button>
+  );
+}
+
 function ImageCard({ img, onClick }: { img: ImageMeta; onClick: () => void }) {
   const [hov, setHov] = useState(false);
   const price = atomicToUSD(img.price);
@@ -106,11 +129,14 @@ function ImageCard({ img, onClick }: { img: ImageMeta; onClick: () => void }) {
 
       {/* Body */}
       <div style={{ padding: "14px 16px 16px" }}>
-        <div style={{
-          fontSize: 13, fontWeight: 600, color: "#f1f5f9", marginBottom: 10,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-        }}>
-          {img.attributs_image.filter(t => t !== "untagged").join(", ") || img.image_name.replace(/^photo_\d+_\w+\.jpg$/, "Sans titre")}
+        <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 10 }}>
+          <span style={{
+            fontSize: 11, fontWeight: 600, color: "#94a3b8", fontFamily: "monospace",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {img.id}
+          </span>
+          <CopyButton text={img.id} />
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 12 }}>
           {img.attributs_image.map(t => (
@@ -363,9 +389,12 @@ export default function MarketplacePage() {
               width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontSize: 14,
             }}>✕</button>
 
-            <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 18, paddingRight: 36, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {selected.attributs_image.filter(t => t !== "untagged").join(", ") || "Sans titre"}
-            </h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 18, paddingRight: 36 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#94a3b8", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {selected.id}
+              </span>
+              <CopyButton text={selected.id} />
+            </div>
 
             {/* Blurred preview */}
             <div style={{ height: 180, borderRadius: 12, overflow: "hidden", background: "#1e293b", marginBottom: 20, position: "relative" }}>

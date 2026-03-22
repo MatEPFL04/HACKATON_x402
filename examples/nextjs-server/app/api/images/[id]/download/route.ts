@@ -27,7 +27,7 @@ const NETWORK = (process.env.TON_NETWORK as "testnet" | "mainnet") ?? "testnet";
 const FACILITATOR_URL =
   process.env.FACILITATOR_URL ?? "http://localhost:3000/api/facilitator";
 
-const PAY_TO = process.env.PAYMENT_ADDRESS;
+// PAY_TO is per-image (seller's wallet), not a global constant
 
 // ============================================================
 // Facilitator helper
@@ -63,26 +63,26 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  if (!PAY_TO) {
-    return Response.json(
-      { error: "Server misconfigured: missing PAYMENT_ADDRESS" },
-      { status: 500 },
-    );
-  }
-
   // ── Look up image ───────────────────────────────────────────
   const record = getImageById(id);
   if (!record) {
     return Response.json({ error: "Image not found" }, { status: 404 });
   }
 
-  // ── Build payment details with THIS image's price ───────────
+  if (!record.owner_walletAddress) {
+    return Response.json(
+      { error: "Image has no seller wallet configured" },
+      { status: 500 },
+    );
+  }
+
+  // ── Build payment details — pay directly to the seller's wallet
   const paymentDetails: PaymentDetails = {
     scheme: "ton-v1",
     network: NETWORK,
     amount: record.price,
     asset: JETTON_ASSET,
-    payTo: PAY_TO,
+    payTo: record.owner_walletAddress,
     facilitatorUrl: FACILITATOR_URL,
     decimals: 9,
   };

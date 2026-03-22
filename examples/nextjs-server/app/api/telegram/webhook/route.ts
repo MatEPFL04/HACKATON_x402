@@ -122,8 +122,8 @@ async function handleStart(chatId: number, userId: number) {
   sessions.set(chatId, { step: "WAIT_IMAGE", userId, updatedAt: Date.now() });
   const knownWallet = getWallet(userId);
   const steps = knownWallet
-    ? "🖼 Image  →  📝 Description  →  💵 Prix (USD)"
-    : "🖼 Image  →  📝 Description  →  💵 Prix (USD)  →  👛 Wallet TON";
+    ? "🖼 Image  →  📝 Description  →  💵 Prix (BSA USD)"
+    : "🖼 Image  →  📝 Description  →  💵 Prix (BSA USD)  →  👛 Wallet TON";
   const total = knownWallet ? "3" : "4";
   await send(
     chatId,
@@ -173,7 +173,7 @@ async function handleDescription(chatId: number, text: string, state: ConvState)
   await send(
     chatId,
     "✅ Description enregistrée !\n\n" +
-    `<b>Étape 3/${total}</b> — Quel est le <b>prix en USD</b> ? (ex: <code>0.05</code>)`
+    `<b>Étape 3/${total}</b> — Quel est le <b>prix en BSA USD</b> ? (ex: <code>0.05</code>)`
   );
 }
 
@@ -237,7 +237,7 @@ async function finalizeListing(chatId: number, wallet: string, state: ConvState)
     `🎉 <b>Annonce publiée !</b>\n\n` +
     `📝 <b>Description :</b> ${description}\n` +
     `🏷 <b>Tags :</b> ${finalTags.join(", ")}\n` +
-    `💵 <b>Prix :</b> ${priceDisplay.toFixed(2)} USD\n` +
+    `💵 <b>Prix :</b> ${priceDisplay.toFixed(2)} BSA USD\n` +
     `👛 <b>Wallet :</b> <code>${wallet}</code>\n` +
     `🆔 <b>ID :</b> <code>${record.id}</code>\n\n` +
     `Tape /start pour créer une nouvelle annonce.`
