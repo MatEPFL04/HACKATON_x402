@@ -163,8 +163,8 @@ export default function MarketplacePage() {
   useEffect(() => { fetchImages(); }, [fetchImages]);
 
   useEffect(() => {
-    if (!autoRefresh) return;
-    const id = setInterval(() => { fetchImages(activeQuery || undefined); }, 5000);
+    if (!autoRefresh || activeQuery) return; // don't re-embed on every tick
+    const id = setInterval(() => { fetchImages(); }, 5000);
     return () => clearInterval(id);
   }, [autoRefresh, activeQuery, fetchImages]);
 

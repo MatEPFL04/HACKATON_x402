@@ -221,7 +221,12 @@ async function finalizeListing(chatId: number, wallet: string, state: ConvState)
     sessions.delete(chatId);
     return;
   }
-  const embedding = await (state.embeddingPromise ?? embed(description));
+  let embedding: number[] | undefined;
+  try {
+    embedding = await (state.embeddingPromise ?? embed(description));
+  } catch (e) {
+    console.warn("[webhook] Embedding failed, listing will skip semantic search:", e);
+  }
   const base64Data = photoBuffer.toString("base64");
   const imageName = `photo_${state.userId}_${Date.now()}.jpg`;
 

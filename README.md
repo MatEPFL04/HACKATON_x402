@@ -1,367 +1,253 @@
-# BSA x TON - Stablecoins & Payments Hackathon Starter
+# HumanLens — Human-verified image marketplace on TON
 
-Welcome to the [BSA](https://bsaepfl.ch/) x [TON](https://ton.org/) **Stablecoins & Payments Hackathon** official starter kit!
-
-This starter was built by BSA members [Stan](https://github.com/hliosone) and [Loris](https://github.com/Loris-EPFL), feel free to reach out to Loris only for questions, bug reports, or anything else.
-
-The goal of this kit is to give you a **fully working pay-per-use API infrastructure** out of the box if you planned to use x402 with TON (you can of course build anything you want), so you can focus on building your product instead of plumbing payment logic. It implements the **x402 protocol** (HTTP 402 Payment Required) on the **TON blockchain**, using **BSA USD** (our testnet stablecoin) as the payment token (TON token is also supported).
+HumanLens is a peer-to-peer marketplace where sellers upload real, human-taken photos via Telegram and buyers pay for them using **BSA USD** (a TON stablecoin) through the **x402 protocol** — enabling both human buyers and autonomous AI agents to discover and purchase images programmatically.
 
 ---
 
-## Tech Stack
+## How it works
 
-This starter is a **pnpm monorepo** built with:
+### Seller flow (Telegram bot)
+1. Send `/start` to the bot
+2. Upload a photo
+3. Write a description
+4. Set a price in BSA USD
+5. Provide your TON wallet address (saved for future listings)
 
-- [TypeScript](https://www.typescriptlang.org/) for everything
-- [Next.js 15](https://nextjs.org/) for the example server (App Router)
-- [TON SDK](https://github.com/ton-org/ton) (`@ton/ton`, `@ton/core`, `@ton/crypto`) for blockchain interactions
-- [pnpm](https://pnpm.io/) for package management
-- **BSA USD** - our TEP-74 Jetton stablecoin deployed on TON testnet
+The bot automatically:
+- Rejects AI-generated images (SightEngine, threshold 0.7)
+- Extracts semantic search tags via Claude (`claude-opus-4-6`)
+- Generates a sentence embedding for semantic search (`all-MiniLM-L6-v2`)
+- Publishes the listing to the marketplace
+
+### Buyer flow (web)
+1. Visit `http://localhost:3000/marketplace`
+2. Search in natural language — *"two people sitting outside"*, *"soldier in forest"*
+3. Click an image to see details and price
+4. Click **Pay & Download** — currently shows the 402 (web wallet integration coming)
+
+### AI agent flow (CLI)
+```bash
+cd examples/client-script
+
+# Search semantically and pick an image interactively
+SEARCH_QUERY="two soldiers in a forest" pnpm buy
+
+# Or use exact tag search
+SEARCH_TAG=indoor pnpm buy
+
+# No filter — show all images
+pnpm buy
+```
+
+The agent:
+1. Searches the marketplace
+2. Shows results with prices, lets you pick by index
+3. Hits the download endpoint → gets HTTP 402
+4. Signs a BSA USD jetton transfer on TON (locally, no broadcast yet)
+5. Retries with the signed BOC → server verifies + settles on-chain
+6. Saves the full-resolution image to `examples/client-script/downloads/`
 
 ---
 
-## Project Structure
+## Architecture
 
 ```
-ton-x402-hackathon-starter/
-├── packages/
-│   ├── core/           # Shared types, protocol headers, encoding utils
-│   ├── client/         # x402Fetch - drop-in fetch wrapper that handles the payment flow
-│   ├── middleware/     # paymentGate - wraps any Next.js route handler with payment logic
-│   └── facilitator/    # BOC verification + on-chain settlement (broadcast + poll)
-│
-└── examples/
-    ├── nextjs-server/  # Full Next.js app with paid routes + built-in facilitator endpoints
-    └── client-script/  # CLI script to test payments end-to-end
+┌─────────────────────────────────────────────────────────────┐
+│                     Next.js Server (port 3000)              │
+│                                                             │
+│  /marketplace          → UI (HumanLens)                     │
+│  /api/images/search    → Semantic search (free)             │
+│  /api/images/:id       → Image metadata (free)              │
+│  /api/images/:id/download → Full image (x402 payment)       │
+│  /api/telegram/webhook → Seller bot                         │
+│  /api/facilitator/*    → x402 verify + settle               │
+└──────────────┬──────────────────────────────────────────────┘
+               │
+       ┌───────┴────────┐
+       │                │
+  Telegram Bot      x402 Protocol
+  (sellers)         (buyers / AI agents)
+       │                │
+  SightEngine       TON Blockchain
+  Claude API        (BSA USD jetton)
+  all-MiniLM-L6-v2
 ```
 
-### Packages at a glance
+### Key packages (from BSA x TON starter)
 
-> These four packages were built from scratch by Stan and Loris specifically for this hackathon starter. They are not published on npm, they live in `packages/` and are linked locally via pnpm workspaces. You can read, extend, or fork them freely.
-
-| Package | What it does |
+| Package | Role |
 |---|---|
-| `@ton-x402/core` | Protocol types (`PaymentRequired`, `PaymentPayload`, `SettlementResponse`), header encode/decode, TON utilities |
-| `@ton-x402/client` | `x402Fetch(url, config)` - wraps native `fetch`, auto-handles the 402 -> sign -> retry flow |
-| `@ton-x402/middleware` | `paymentGate(handler, { config })` - wraps a Next.js route handler, adding payment verification before calling your code |
-| `@ton-x402/facilitator` | `createVerifyHandler` / `createSettleHandler` - HTTP handlers for the facilitator API, which verifies BOCs offline and broadcasts on-chain |
+| `@ton-x402/core` | Protocol types, header encode/decode |
+| `@ton-x402/client` | `x402Fetch` — handles 402 → sign → retry automatically |
+| `@ton-x402/facilitator` | Verifies BOC offline, broadcasts on-chain, polls confirmation |
+| `@ton-x402/middleware` | `paymentGate` — wraps any Next.js route with payment logic |
 
 ---
 
-## Quickstart
+## Setup
 
 ### Prerequisites
 
-**To run the server** (required for everyone):
-- [Node.js](https://nodejs.org/) >= 18
-- [pnpm](https://pnpm.io/) - install with `npm i -g pnpm`
-- A Toncenter API key (free at [toncenter.com](https://toncenter.com))
-- A TON wallet address to receive payments (just the address, no mnemonic needed server-side)
+- Node.js >= 18
+- pnpm (`npm i -g pnpm`)
+- A Toncenter API key — [toncenter.com](https://toncenter.com)
+- A Telegram bot token — [@BotFather](https://t.me/BotFather)
+- An Anthropic API key — [console.anthropic.com](https://console.anthropic.com)
+- A SightEngine account — [sightengine.com](https://sightengine.com) (free tier: 2000 checks/month)
 
-**To run our client test scripts** (`pnpm dev:client`, `pnpm dev:client:joke`) - optional:
-- A TON testnet wallet with its 24-word mnemonic (e.g. Tonkeeper, switch to testnet mode)
-- Testnet TON (for gas) and testnet BSA USD (for payments) on that wallet
-
-### 1. Clone the repo
+### 1. Install & build
 
 ```bash
-git clone git@github.com:bsaepfl/bsa-sp-template-x402-2026.git
-cd bsa-sp-template-x402-2026
-```
-
-### 2. Install dependencies and build packages
-
-```bash
+git clone <repo>
+cd <repo>
 pnpm install
 pnpm build
 ```
 
-### 3. Configure the environment
+### 2. Configure environment
 
-```bash
-cd examples/nextjs-server
-cp .env.example .env.local
-```
-
-Open `.env.local` and fill in your values:
+Edit `examples/nextjs-server/.env.local`:
 
 ```env
-# TON network: "testnet" or "mainnet"
+# TON network
 TON_NETWORK=testnet
-
-# Your wallet address - this is where your server receives payments
-PAYMENT_ADDRESS=your_ton_wallet_address_here
-
-# BSA USD Jetton master contract on TON testnet (pre-filled)
 JETTON_MASTER_ADDRESS=kQCd6G7c_HUBkgwtmGzpdqvHIQoNkYOEE0kSWoc5v57hPPnW
 
-# Facilitator URL - the Next.js app ships a built-in facilitator at /api/facilitator
+# Facilitator (built into the server)
 FACILITATOR_URL=http://localhost:3000/api/facilitator
-#FACILITATOR_URL=https://ton-x402-nextjs-server-lqa1jowhn-hliosones-projects.vercel.app/api/facilitator
 
-# Toncenter RPC (get a free API key at https://toncenter.com)
+# Toncenter RPC
 TON_RPC_URL=https://testnet.toncenter.com/api/v2/jsonRPC
-RPC_API_KEY=your_toncenter_api_key_here
+RPC_API_KEY=your_toncenter_api_key
 
-# 24-word mnemonic of the wallet used by the client-script examples to PAY endpoints
-# Only needed to run pnpm dev:client / pnpm dev:client:joke - not used by the server at all
-WALLET_MNEMONIC="word1 word2 word3 ... word24"
+# Buyer wallet — used by client-script only, never by the server
+WALLET_MNEMONIC="word1 word2 ... word24"
+
+# Telegram bot
+TELEGRAM_BOT_TOKEN=your_bot_token
+
+# SightEngine — AI image detection
+SIGHTENGINE_API_USER=your_user
+SIGHTENGINE_API_SECRET=your_secret
+
+# Anthropic — tag extraction
+ANTHROPIC_API_KEY=your_key
 ```
 
-> **Note on `PAYMENT_ADDRESS` vs `WALLET_MNEMONIC`:** `PAYMENT_ADDRESS` is just an address - it's where your server *receives* payments, and the server never needs the private key. `WALLET_MNEMONIC` is the 24-word seed of the *client* wallet that *sends* payments, and is only used by our test scripts in `examples/client-script/`. If you're building your own client, you won't need `WALLET_MNEMONIC` at all - just implement the same signing logic with your own wallet setup.
-
-### 4. Get testnet funds (only needed to run the client test scripts)
-
-If you want to run `pnpm dev:client` or `pnpm dev:client:joke` to test payments end-to-end, the wallet from your `WALLET_MNEMONIC` needs:
-
-**Testnet TON** (for gas fees):
-- Use the Telegram bot [@testgiver_ton_bot](https://t.me/testgiver_ton_bot) to get free testnet TON
-
-**Testnet BSA USD** (the payment token):
-- Use our [BSA USD faucet](https://ton-x402-nextjs-server-dyvpwctew-hliosones-projects.vercel.app/) to receive BSA USD on TON testnet
-
-> If you're only running the server and building your own client, you can skip this step.
-
-### 5. Start the server
-
-From the **repo root**:
+### 3. Start the server
 
 ```bash
 pnpm dev
 ```
 
-This starts the Next.js dev server at `http://localhost:3000`. Visit it to see a landing page explaining the protocol and a quickstart guide.
-
-### 6. Test a payment end-to-end
-
-In a separate terminal, still from the **repo root**:
+### 4. Register the Telegram webhook
 
 ```bash
-# Pay for weather data (0.01 BSA USD)
-pnpm dev:client
-
-# Pay for a developer joke (0.01 BSA USD)
-pnpm dev:client:joke
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-domain>/api/telegram/webhook"
 ```
 
-You should see output like:
-
-```
-💰 Wallet: 0QA...
-💎 Balance: 12.5 TON
-🔢 Seqno: 3
-
-🌐 Requesting: http://localhost:3000/api/weather
-💸 Payment required: 1.0 BSA USD
-🪙 Asset: Jetton (kQCd6G7...)
-📍 Pay to: EQB...
-🌐 Network: testnet
-
-🔐 Signing payment: 1.0 BSA USD to EQB...
-✅ Payment confirmed!
-📝 TX Hash: 8f3a...
-🌐 Network: testnet
-
-📦 Resource data:
-{
-  "location": "Lausanne, Switzerland",
-  "temperature": 22,
-  ...
-}
+For local development use [ngrok](https://ngrok.com):
+```bash
+ngrok http 3000
+# then set webhook to https://<ngrok-url>/api/telegram/webhook
 ```
 
 ---
 
-## Adding a Paid Route to Your App
+## Testnet funds (for buyers)
 
-This is the core of what you'll be doing during the hackathon. It takes **3 lines** to protect any API route.
-
-### Server side
-
-Create `app/api/my-endpoint/route.ts`:
-
-```typescript
-import { paymentGate } from "@ton-x402/middleware";
-import { getPaymentConfig } from "../../../lib/payment-config";
-
-const handler = (_request: Request) => {
-    return Response.json({ secret: "Here is your premium data!" });
-};
-
-export const GET = paymentGate(handler, {
-    config: getPaymentConfig({
-        amount: "10000000",  // 0.01 BSA USD (9 decimals)
-        asset: process.env.JETTON_MASTER_ADDRESS,
-        description: "My premium endpoint (0.01 BSA USD)",
-        decimals: 9,
-    }),
-});
-```
-
-That's it. `paymentGate` handles everything:
-- Returns `402` with payment instructions if no payment is attached
-- Calls the facilitator to verify the signature
-- Broadcasts the transaction on-chain and waits for confirmation
-- Calls your handler only once payment is confirmed
-- Adds the `PAYMENT-RESPONSE` header (with TX hash) to the response
-
-### Client side
-
-```typescript
-import { x402Fetch } from "@ton-x402/client";
-import { mnemonicToPrivateKey } from "@ton/crypto";
-import { WalletContractV5R1, TonClient } from "@ton/ton";
-
-const keypair = await mnemonicToPrivateKey(process.env.WALLET_MNEMONIC!.split(" "));
-const wallet = WalletContractV5R1.create({ publicKey: keypair.publicKey, workchain: 0 });
-const client = new TonClient({ endpoint: process.env.TON_RPC_URL!, apiKey: process.env.RPC_API_KEY });
-const walletContract = client.open(wallet);
-const seqno = await walletContract.getSeqno();
-
-const result = await x402Fetch("http://localhost:3000/api/my-endpoint", {
-    wallet,
-    keypair,
-    seqno,
-    client,
-});
-
-if (result.response.ok) {
-    const data = await result.response.json();
-    console.log(data); // { secret: "Here is your premium data!" }
-    console.log("TX Hash:", result.settlement?.txHash);
-}
-```
-
-`x402Fetch` is a drop-in replacement for `fetch`. It:
-1. Makes the first request
-2. If it gets a `402`, builds and signs the payment BOC locally
-3. Retries with the `PAYMENT-SIGNATURE` header
-4. Returns the final response + settlement info (TX hash, network)
+The buyer wallet needs:
+- **Testnet TON** (gas) → [@testgiver_ton_bot](https://t.me/testgiver_ton_bot)
+- **Testnet BSA USD** → [BSA USD faucet](https://ton-x402-nextjs-server-dyvpwctew-hliosones-projects.vercel.app/)
 
 ---
 
-## Example API Routes
+## API Reference
 
-The starter ships with three working paid endpoints:
+### `GET /api/images/search`
 
-| Route | Price | Description |
+Free endpoint. Returns image metadata + blurred thumbnails.
+
+| Param | Type | Description |
 |---|---|---|
-| `GET /api/weather` | 0.01 BSA USD | Dummy weather data for Lausanne |
-| `GET /api/joke` | 0.01 BSA USD | Random developer joke |
-| `GET /api/premium-content` | 0.01 BSA USD | Generic premium content with a secret code |
+| `q` | string | Natural language semantic query |
+| `tags` | string | Comma-separated exact tags (fallback) |
+| `min_price` | string | Minimum price in atomic BSA USD |
+| `max_price` | string | Maximum price in atomic BSA USD |
+| `limit` | number | Max results (default 20, max 100) |
+| `offset` | number | Pagination offset |
 
-Each is protected with `paymentGate` using the BSA USD Jetton. Look at their source in `examples/nextjs-server/app/api/` for reference implementations.
+Results when using `q=` are sorted by semantic similarity (best match first). Each result includes a `score` field (0–1).
 
----
+```bash
+# Semantic search
+curl -G "http://localhost:3000/api/images/search" \
+  --data-urlencode "q=two soldiers in a forest" | jq
 
-## The Facilitator
-
-The **facilitator** is a small HTTP service with two endpoints:
-
-- `POST /verify` - validates the signed BOC offline: checks recipient address, amount, asset type, network. Fast, no on-chain call.
-- `POST /settle` - broadcasts the BOC to the TON network and polls for confirmation (up to 60s by default). Returns the TX hash on success.
-
-In this starter, the facilitator **lives inside the Next.js app** at `/api/facilitator/verify` and `/api/facilitator/settle`. This means you don't need to run a separate service - everything is self-contained.
-
-```typescript
-// examples/nextjs-server/app/api/facilitator/shared.ts
-import { createVerifyHandler, createSettleHandler } from "@ton-x402/facilitator";
-
-const config = {
-    tonRpcUrl: process.env.TON_RPC_URL ?? "https://testnet.toncenter.com/api/v2/jsonRPC",
-    tonApiKey: process.env.RPC_API_KEY,
-};
-
-export const verifyHandler = createVerifyHandler(config);
-export const settleHandler = createSettleHandler(config);
+# Tag search
+curl "http://localhost:3000/api/images/search?tags=indoor,people" | jq
 ```
 
-If you want to deploy the facilitator separately (recommended for production), just expose these handlers behind any HTTP server.
+### `GET /api/images/:id/download`
+
+Paid endpoint — protected by x402. Returns full-resolution image on successful payment.
+
+```bash
+# Step 1 — probe (returns 402 with payment details)
+curl -i "http://localhost:3000/api/images/<ID>/download"
+
+# Step 2 — pay using the client script
+cd examples/client-script
+RESOURCE_URL=http://localhost:3000/api/images/<ID>/download pnpm pay
+```
+
+**Payment details returned in 402:**
+- `amount` — price in atomic BSA USD (divide by 10^9 for display)
+- `payTo` — seller's TON wallet address (payments go directly to the seller)
+- `asset` — BSA USD jetton master contract address
 
 ---
 
-## Environment Variables Reference
+## Semantic Search
 
-| Variable | Required | Description |
-|---|---|---|
-| `TON_NETWORK` | Yes | `testnet` or `mainnet` |
-| `PAYMENT_ADDRESS` | Yes | TON wallet address that receives payments (your server's wallet) |
-| `JETTON_MASTER_ADDRESS` | Yes | BSA USD master contract - pre-filled for testnet |
-| `FACILITATOR_URL` | No | URL of the facilitator service. Defaults to `http://localhost:3000/api/facilitator` |
-| `TON_RPC_URL` | No | Toncenter RPC endpoint. Defaults to testnet |
-| `RPC_API_KEY` | Recommended | Your Toncenter API key - required to avoid rate limits |
-| `WALLET_MNEMONIC` | Only for client scripts | 24-word mnemonic of the wallet that *pays* endpoints - only used by `pnpm dev:client` / `pnpm dev:client:joke`. The server never touches it. |
+Images are embedded at upload time using `all-MiniLM-L6-v2` (384-dim, ~25MB, runs locally). Queries are embedded at search time and ranked by cosine similarity.
+
+- **Threshold**: 0.40 — images below this score are excluded
+- **First upload**: triggers model download (~25MB, cached after)
+- **Old images**: no embedding → fall back to tag search
+
+Score interpretation:
+- `> 0.6` — very close match
+- `0.4–0.6` — related topic
+- `< 0.4` — excluded
 
 ---
 
-## Scripts Reference
-
-All scripts are run from the **repo root** with pnpm:
+## Scripts
 
 | Command | Description |
 |---|---|
-| `pnpm install` | Install all dependencies across the monorepo |
-| `pnpm build` | Build all packages (`core`, `client`, `middleware`, `facilitator`) |
-| `pnpm dev` | Start the Next.js dev server at `localhost:3000` |
-| `pnpm dev:client` | Run the client script - pays the `/api/weather` endpoint |
-| `pnpm dev:client:joke` | Run the client script - pays the `/api/joke` endpoint |
-| `pnpm address` | Display wallet address formats (useful for debugging) |
-| `pnpm clean` | Delete all compiled output from `packages/*/dist` |
-| `pnpm typecheck` | Run TypeScript type checking across all packages |
+| `pnpm dev` | Start Next.js server at `localhost:3000` |
+| `pnpm build` | Build all packages |
+| From `examples/client-script/`: | |
+| `SEARCH_QUERY="..." pnpm buy` | Semantic search + interactive buy flow |
+| `SEARCH_TAG=indoor pnpm buy` | Exact tag search + interactive buy flow |
+| `RESOURCE_URL=<url> pnpm pay` | Pay for a specific URL directly |
 
 ---
 
-## What is x402?
+## Tech Stack
 
-x402 is an open protocol for **machine-to-machine HTTP micropayments**. The idea is simple:
-
-1. A client requests a protected resource (e.g. `GET /api/weather`)
-2. The server responds **402 Payment Required** with payment instructions
-3. The client signs a payment transaction **locally** (nothing is broadcast yet)
-4. The client retries the request with the signed transaction attached
-5. The server sends the signed transaction to a **facilitator**, which verifies it, broadcasts it on-chain, and waits for confirmation
-6. Once confirmed, the server unlocks the resource and returns it, along with the on-chain TX hash
-
-No wallets to connect. No web UI needed. Just HTTP headers and cryptographic signatures.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Server
-    participant Facilitator
-    participant TON
-
-    Client->>Server: GET /api/weather
-    Server-->>Client: 402 Payment Required (PAYMENT-REQUIRED header)
-
-    Note over Client: Signs BOC locally (Jetton / TON)
-
-    Client->>Server: GET + PAYMENT-SIGNATURE header
-    Server->>Facilitator: POST /verify (offline check)
-    Facilitator-->>Server: { valid: true }
-
-    Server->>Facilitator: POST /settle (broadcast + confirm)
-    Facilitator->>TON: Broadcast signed BOC
-    TON-->>Facilitator: Transaction confirmed
-    Facilitator-->>Server: { success: true, txHash }
-
-    Server-->>Client: 200 OK + data + PAYMENT-RESPONSE header
-```
+- **Next.js 15** — server + marketplace UI
+- **TON SDK** — wallet, transactions, jetton transfers
+- **BSA USD** — TEP-74 stablecoin on TON testnet (9 decimals)
+- **x402 protocol** — HTTP 402 micropayments
+- **Telegram Bot API** — seller onboarding
+- **SightEngine** — AI-generated image detection
+- **Anthropic Claude** (`claude-opus-4-6`) — semantic tag extraction
+- **HuggingFace Transformers** (`all-MiniLM-L6-v2`) — local sentence embeddings
+- **Sharp** — server-side thumbnail generation
 
 ---
 
-## Useful Links
-
-- [TON Documentation](https://docs.ton.org)
-- [Toncenter API](https://toncenter.com) - free RPC endpoint + API key
-- [Tonkeeper Wallet](https://tonkeeper.com) - mobile wallet with testnet mode
-- [@testgiver_ton_bot](https://t.me/testgiver_ton_bot) - testnet TON faucet
-- [BSA USD Faucet](https://ton-x402-nextjs-server-dyvpwctew-hliosones-projects.vercel.app/) - testnet BSA USD faucet
-- [TEP-74 Jetton Standard](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md) - the token standard used for BSA USD
-- [BSA Website](https://bsaepfl.ch)
-
----
-
-## License
-
-MIT
+## Built at BSA x TON Hackathon 2026

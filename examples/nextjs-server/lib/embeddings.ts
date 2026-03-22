@@ -6,17 +6,21 @@ import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transform
 // Model: all-MiniLM-L6-v2 (~25MB, 384-dim vectors)
 // ============================================================
 
-let embedder: FeatureExtractionPipeline | null = null;
+// Promise-based singleton — concurrent calls share the same load promise
+// instead of each spawning their own, preventing double-loading.
+let embedderPromise: Promise<FeatureExtractionPipeline> | null = null;
 
 async function getEmbedder(): Promise<FeatureExtractionPipeline> {
-  if (!embedder) {
+  if (!embedderPromise) {
     console.log("[embeddings] Loading all-MiniLM-L6-v2...");
-    embedder = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
+    embedderPromise = pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
       dtype: "fp32",
+    }).then((model) => {
+      console.log("[embeddings] Model ready.");
+      return model;
     });
-    console.log("[embeddings] Model ready.");
   }
-  return embedder;
+  return embedderPromise;
 }
 
 /**
