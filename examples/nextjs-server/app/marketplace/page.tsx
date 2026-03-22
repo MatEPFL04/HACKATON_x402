@@ -163,8 +163,8 @@ function ImageCard({ img, onClick }: { img: ImageMeta; onClick: () => void }) {
 
 export default function MarketplacePage() {
   const [images, setImages]           = useState<ImageMeta[]>([]);
-  const [tagInput, setTagInput]       = useState("");
-  const [activeTags, setActiveTags]   = useState<string[]>([]);
+  const [queryInput, setQueryInput]   = useState("");
+  const [activeQuery, setActiveQuery] = useState("");
   const [totalCount, setTotalCount]   = useState(0);
   const [loading, setLoading]         = useState(true);
   const [selected, setSelected]       = useState<ImageMeta | null>(null);
@@ -174,10 +174,10 @@ export default function MarketplacePage() {
 
   // ── Data fetching ──────────────────────────────────────────
 
-  const fetchImages = useCallback(async (tags?: string) => {
+  const fetchImages = useCallback(async (query?: string) => {
     try {
-      const q = tags ? `?tags=${encodeURIComponent(tags)}&limit=50` : "?limit=50";
-      const res  = await fetch(`/api/images/search${q}`);
+      const qs = query ? `?q=${encodeURIComponent(query)}&limit=50` : "?limit=50";
+      const res  = await fetch(`/api/images/search${qs}`);
       const data = await res.json();
       setImages(data.images ?? []);
       setTotalCount(data.count ?? 0);
@@ -193,32 +193,21 @@ export default function MarketplacePage() {
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const id = setInterval(() => { fetchImages(activeTags.join(",") || undefined); }, 5000);
+    const id = setInterval(() => { fetchImages(activeQuery || undefined); }, 5000);
     return () => clearInterval(id);
-  }, [autoRefresh, activeTags, fetchImages]);
+  }, [autoRefresh, activeQuery, fetchImages]);
 
   // ── Actions ───────────────────────────────────────────────
 
-  const addTag = (raw: string) => {
-    const tag = raw.trim().toLowerCase();
-    if (!tag || activeTags.includes(tag) || activeTags.length >= 10) return;
-    const next = [...activeTags, tag];
-    setActiveTags(next);
-    setTagInput("");
+  const runSearch = (q: string) => {
+    setActiveQuery(q);
     setLoading(true);
-    fetchImages(next.join(","));
+    fetchImages(q || undefined);
   };
 
-  const removeTag = (tag: string) => {
-    const next = activeTags.filter(t => t !== tag);
-    setActiveTags(next);
-    setLoading(true);
-    fetchImages(next.join(",") || undefined);
-  };
-
-  const clearFilter = () => {
-    setActiveTags([]);
-    setTagInput("");
+  const clearSearch = () => {
+    setQueryInput("");
+    setActiveQuery("");
     setLoading(true);
     fetchImages();
   };
@@ -296,55 +285,40 @@ export default function MarketplacePage() {
 
         {/* SEARCH */}
         <div style={{ marginBottom: 32 }}>
-          <div style={{ display: "flex", gap: 10, marginBottom: activeTags.length > 0 ? 12 : 0 }}>
+          <div style={{ display: "flex", gap: 10 }}>
             <div style={{ flex: 1, position: "relative" }}>
               <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#475569", fontSize: 14 }}>🔍</span>
               <input
-                value={tagInput}
-                onChange={e => setTagInput(e.target.value)}
+                value={queryInput}
+                onChange={e => setQueryInput(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagInput); }
-                  if (e.key === "Escape") clearFilter();
-                  if (e.key === "Backspace" && tagInput === "" && activeTags.length > 0) removeTag(activeTags[activeTags.length - 1]);
+                  if (e.key === "Enter") { e.preventDefault(); runSearch(queryInput); }
+                  if (e.key === "Escape") clearSearch();
                 }}
-                placeholder={activeTags.length >= 10 ? "Max 10 tags reached" : "Add a tag and press Enter…"}
-                disabled={activeTags.length >= 10}
+                placeholder="Search in natural language… (e.g. two people sitting outside)"
                 style={{
                   width: "100%", boxSizing: "border-box",
-                  background: "#0f172a", border: "1px solid #1e293b",
+                  background: "#0f172a", border: `1px solid ${activeQuery ? "#3b82f6" : "#1e293b"}`,
                   borderRadius: 10, padding: "10px 14px 10px 40px",
                   color: "#f1f5f9", fontSize: 14, outline: "none",
-                  opacity: activeTags.length >= 10 ? 0.5 : 1,
                 }}
               />
             </div>
-            <button onClick={() => addTag(tagInput)} style={{
+            <button onClick={() => runSearch(queryInput)} style={{
               background: "#3b82f6", color: "#fff", border: "none",
               borderRadius: 10, padding: "0 20px", fontWeight: 600, fontSize: 14, cursor: "pointer",
-            }}>Add</button>
-            {activeTags.length > 0 && (
-              <button onClick={clearFilter} style={{
+            }}>Search</button>
+            {activeQuery && (
+              <button onClick={clearSearch} style={{
                 background: "transparent", border: "1px solid #1e293b",
                 color: "#64748b", borderRadius: 10, padding: "0 16px", fontSize: 13, cursor: "pointer",
               }}>Clear</button>
             )}
           </div>
-          {activeTags.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-              {activeTags.map(t => {
-                const c = tagColor(t);
-                return (
-                  <button key={t} onClick={() => removeTag(t)} style={{
-                    background: `${c}22`, border: `1px solid ${c}88`,
-                    color: c, borderRadius: 20, padding: "4px 10px 4px 14px",
-                    fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
-                  }}>
-                    {t} <span style={{ fontSize: 10, opacity: 0.7 }}>✕</span>
-                  </button>
-                );
-              })}
-              <span style={{ color: "#334155", fontSize: 12, alignSelf: "center" }}>{activeTags.length}/10</span>
-            </div>
+          {activeQuery && (
+            <p style={{ color: "#475569", fontSize: 12, margin: "8px 0 0 4px" }}>
+              Semantic results for: <span style={{ color: "#06b6d4", fontWeight: 600 }}>"{activeQuery}"</span>
+            </p>
           )}
         </div>
 

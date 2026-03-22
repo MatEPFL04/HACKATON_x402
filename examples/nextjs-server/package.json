@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.55.0",
+    "@huggingface/transformers": "^3.8.1",
     "@ton-x402/core": "workspace:*",
     "@ton-x402/facilitator": "workspace:*",
     "@ton-x402/middleware": "workspace:*",

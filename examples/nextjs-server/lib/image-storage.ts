@@ -3,6 +3,7 @@ import path from "path";
 import crypto from "crypto";
 import sharp from "sharp";
 import type { ImageRecord, SearchParams, ImagePublicMeta } from "./types";
+import { embed, cosineSimilarity } from "./embeddings";
 
 const DATA_DIR   = path.join(process.cwd(), "data");
 const IMAGES_DIR = path.join(DATA_DIR, "images");
@@ -76,6 +77,7 @@ export async function addImage(
   tags: string[],
   price: string,
   base64Data: string,
+  embedding?: number[],
 ): Promise<ImageRecord> {
   const id = crypto.randomUUID();
   const record: ImageRecord = {
@@ -86,6 +88,7 @@ export async function addImage(
     attributs_image: tags.map((t) => t.toLowerCase().trim()).filter(Boolean),
     price,
     created_at: new Date().toISOString(),
+    embedding,
   };
 
   ensureDirs();
@@ -111,19 +114,13 @@ export async function addImage(
 
 // ── Search ───────────────────────────────────────────────────
 
-export function searchImages(params: SearchParams): {
+export async function searchImages(params: SearchParams): Promise<{
   count: number;
   images: ImagePublicMeta[];
-} {
+}> {
   let records = readIndex();
 
-  if (params.tags && params.tags.length > 0) {
-    const queryTags = params.tags.map((t) => t.toLowerCase().trim());
-    records = records.filter((r) =>
-      queryTags.every((tag) => r.attributs_image.includes(tag)),
-    );
-  }
-
+  // ── Price + owner filters (always applied) ────────────────
   if (params.min_price !== undefined) {
     const min = BigInt(params.min_price);
     records = records.filter((r) => { try { return BigInt(r.price) >= min; } catch { return false; } });
@@ -132,19 +129,64 @@ export function searchImages(params: SearchParams): {
     const max = BigInt(params.max_price);
     records = records.filter((r) => { try { return BigInt(r.price) <= max; } catch { return false; } });
   }
-
   if (params.owner_ID) {
     records = records.filter((r) => r.owner_ID === params.owner_ID);
   }
 
-  const count = records.length;
+  // ── Semantic search (q=) ──────────────────────────────────
+  if (params.q && params.q.trim().length > 0) {
+    const queryVec = await embed(params.q.trim());
+    const THRESHOLD = 0.40;
+
+    // Score every record that has an embedding
+    const scored = records
+      .map((r) => ({
+        record: r,
+        score: r.embedding ? cosineSimilarity(queryVec, r.embedding) : null,
+      }));
+
+    // Records with embeddings above threshold, sorted by score desc
+    const withEmbedding = scored
+      .filter((s) => s.score !== null && s.score >= THRESHOLD)
+      .sort((a, b) => (b.score as number) - (a.score as number));
+
+    // Records without embeddings fall back to tag search
+    const withoutEmbedding = scored
+      .filter((s) => s.score === null)
+      .map((s) => s.record);
+
+    const tagFiltered = params.tags && params.tags.length > 0
+      ? withoutEmbedding.filter((r) => {
+          const qt = params.tags!.map((t) => t.toLowerCase().trim());
+          return qt.every((tag) => r.attributs_image.includes(tag));
+        })
+      : withoutEmbedding;
+
+    const offset = params.offset ?? 0;
+    const limit  = params.limit  ?? 20;
+    const allResults = [
+      ...withEmbedding.map((s) => ({ ...toPublicMeta(s.record), score: Math.round((s.score as number) * 100) / 100 })),
+      ...tagFiltered.map(toPublicMeta),
+    ];
+    return {
+      count: allResults.length,
+      images: allResults.slice(offset, offset + limit),
+    };
+  }
+
+  // ── Exact tag search (no q=) ──────────────────────────────
+  if (params.tags && params.tags.length > 0) {
+    const queryTags = params.tags.map((t) => t.toLowerCase().trim());
+    records = records.filter((r) =>
+      queryTags.every((tag) => r.attributs_image.includes(tag)),
+    );
+  }
+
   records.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const offset = params.offset ?? 0;
   const limit  = params.limit  ?? 20;
-  const page   = records.slice(offset, offset + limit);
-
-  return { count, images: page.map(toPublicMeta) };
+  return { count: records.length, images: records.slice(offset, offset + limit).map(toPublicMeta) };
 }
 
 // ── Get by id ────────────────────────────────────────────────

@@ -6,6 +6,9 @@ export interface ImageRecord {
   attributs_image: string[];
   price: string;
   created_at: string;
+  // 384-dim sentence embedding of the description + tags (all-MiniLM-L6-v2)
+  // Absent on images uploaded before semantic search was added.
+  embedding?: number[];
 }
 
 export interface TelegramWebhookPayload {
@@ -24,7 +27,8 @@ export interface ImagePublicMeta {
   price: string;
   owner_ID: string;
   created_at: string;
-  image_data?: string; // base64, pour la preview floutée
+  image_data?: string;   // base64, pour la preview floutée
+  score?: number;        // cosine similarity score from semantic search (0-1)
 }
 
 export interface ImageDownloadResponse {
@@ -36,7 +40,8 @@ export interface ImageDownloadResponse {
 }
 
 export interface SearchParams {
-  tags?: string[];
+  q?: string;       // free-text semantic query (uses embeddings)
+  tags?: string[];  // exact tag match (fallback for images without embeddings)
   min_price?: string;
   max_price?: string;
   owner_ID?: string;

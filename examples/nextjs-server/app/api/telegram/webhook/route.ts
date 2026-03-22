@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { addImage } from "../../../../lib/image-storage";
 import { extractAttributes } from "../../../../lib/extract-attributes";
+import { embed } from "../../../../lib/embeddings";
 import { getWallet, saveWallet } from "../../../../lib/user-wallet-store";
 
 // ============================================================
@@ -64,6 +65,7 @@ interface ConvState {
   photoBufferPromise?: Promise<Buffer>;
   aiScorePromise?: Promise<number | null>;
   tagsPromise?: Promise<string[]>;
+  embeddingPromise?: Promise<number[]>;
 }
 
 // chatId → state
@@ -166,8 +168,9 @@ async function handleDescription(chatId: number, text: string, state: ConvState)
   state.step = "WAIT_PRICE";
   state.updatedAt = Date.now();
 
-  // Start tag extraction in background while user types price
+  // Start tag extraction and embedding in background while user types price
   state.tagsPromise = extractAttributes(state.description);
+  state.embeddingPromise = embed(state.description);
 
   const total = getWallet(state.userId) ? "3" : "4";
   await send(
@@ -218,6 +221,7 @@ async function finalizeListing(chatId: number, wallet: string, state: ConvState)
     sessions.delete(chatId);
     return;
   }
+  const embedding = await (state.embeddingPromise ?? embed(description));
   const base64Data = photoBuffer.toString("base64");
   const imageName = `photo_${state.userId}_${Date.now()}.jpg`;
 
@@ -227,7 +231,8 @@ async function finalizeListing(chatId: number, wallet: string, state: ConvState)
     wallet,
     finalTags,
     priceAtomic,
-    base64Data
+    base64Data,
+    embedding,
   );
 
   sessions.delete(chatId);

@@ -2,14 +2,15 @@
  * buy-image.ts
  *
  * Interactive agent flow:
- *   1. Search images by tag
+ *   1. Search images by natural language query (semantic) or tag (fallback)
  *   2. Display results, user picks an index
  *   3. GET /download → 402
  *   4. GET /download + BOC → 200 → save to disk
  *
  * Usage:
- *   SEARCH_TAG=indoor pnpm buy
- *   SEARCH_TAG=people SERVER_URL=http://localhost:3000 pnpm buy
+ *   SEARCH_QUERY="two people sitting outside" pnpm buy
+ *   SEARCH_TAG=indoor pnpm buy          (exact tag fallback)
+ *   SERVER_URL=http://localhost:3000 pnpm buy
  */
 
 import fs from "node:fs";
@@ -20,8 +21,9 @@ import { nanoToTon } from "@ton-x402/core";
 import { TonClient, WalletContractV5R1 } from "@ton/ton";
 import { mnemonicToPrivateKey } from "@ton/crypto";
 
-const SERVER_URL = process.env.SERVER_URL ?? "http://localhost:3000";
-const SEARCH_TAG = process.env.SEARCH_TAG ?? "";
+const SERVER_URL   = process.env.SERVER_URL   ?? "http://localhost:3000";
+const SEARCH_QUERY = process.env.SEARCH_QUERY ?? "";  // natural language semantic search
+const SEARCH_TAG   = process.env.SEARCH_TAG   ?? "";  // exact tag fallback
 
 function ask(question: string): Promise<string> {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -49,9 +51,14 @@ async function main() {
     console.log("  Seqno:   ", seqno);
 
     // ── Step 1: Search ───────────────────────────────────────────────
-    const searchUrl = SEARCH_TAG
-        ? `${SERVER_URL}/api/images/search?tags=${encodeURIComponent(SEARCH_TAG)}&limit=10`
-        : `${SERVER_URL}/api/images/search?limit=10`;
+    let searchUrl: string;
+    if (SEARCH_QUERY) {
+        searchUrl = `${SERVER_URL}/api/images/search?q=${encodeURIComponent(SEARCH_QUERY)}&limit=10`;
+    } else if (SEARCH_TAG) {
+        searchUrl = `${SERVER_URL}/api/images/search?tags=${encodeURIComponent(SEARCH_TAG)}&limit=10`;
+    } else {
+        searchUrl = `${SERVER_URL}/api/images/search?limit=10`;
+    }
 
     console.log(`\nSearching: ${searchUrl}\n`);
     const searchRes = await fetch(searchUrl);
@@ -65,7 +72,8 @@ async function main() {
     };
 
     if (!images || images.length === 0) {
-        console.error(`No images found${SEARCH_TAG ? ` for tag "${SEARCH_TAG}"` : ""}`);
+        const hint = SEARCH_QUERY ? `for query "${SEARCH_QUERY}"` : SEARCH_TAG ? `for tag "${SEARCH_TAG}"` : "";
+        console.error(`No images found${hint ? ` ${hint}` : ""}`);
         process.exit(1);
     }
 

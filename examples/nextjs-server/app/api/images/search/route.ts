@@ -19,6 +19,9 @@ export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams;
   const params: SearchParams = {};
 
+  const q = sp.get("q");
+  if (q) params.q = q;
+
   const tagsRaw = sp.get("tags");
   if (tagsRaw) {
     params.tags = tagsRaw.split(",").map((t) => t.trim()).filter(Boolean);
@@ -39,6 +42,6 @@ export async function GET(request: NextRequest) {
   const offsetRaw = sp.get("offset");
   params.offset = offsetRaw ? Math.max(parseInt(offsetRaw, 10) || 0, 0) : 0;
 
-  const result = searchImages(params);
+  const result = await searchImages(params);
   return NextResponse.json(result);
 }
